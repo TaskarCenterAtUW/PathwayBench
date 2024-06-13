@@ -17,5 +17,49 @@ conda activate pathwaybench
 # install the necessary packages with `requirements.txt`:
 pip install -r requirements.txt
 ```
-This code has been tested with Python 3.8 on Ubuntu 18.04. 
+This code has been tested with Python 3.8 on Ubuntu 20.04. 
+
+## Datasets
+Each set of samples in the PathwayBench dataset includes five co-registered features. The filename of each set of samples and the corresponding features are listed below:
+
+| Filename | Feature Type
+|--|--|
+| xxxx_aerial.png | The aerial satellite imagery.
+| xxxx_road.geojson | The street (road) graph.
+| xxxx_road.png | The rasterized street map (with additional features).
+| xxxx_gt_graph.geojson | The human-validated pedestrian pathway graph.
+| xxxx_gt_mask.png | The rasterized human-validated pedestrian pathway graph to support semantic segmentation tasks.
+| xxxx_gt_color.png | The color-coded version of xxxx_gt_mask.png for visualization purposes.
+
+Below are the links to the dataset that are currently supported by PathwayBench
+| City | Data |
+|--|--|
+| Seattle, WA| [Link to dataset]([https://drive.google.com/file/d/1txGmqE6Xvn16o1rE4CyGoXaEHY5DXS9b](https://drive.google.com/drive/folders/1CnTVuARwv7j-9WXXJpAb3l6NC3n0nhO9?usp=sharing)) 
+| Washington, D.C. | [Link to dataset]([https://drive.google.com/file/d/1twzSWqTj8FL6LIVdaljmrG394LMo3QZ8](https://drive.google.com/drive/folders/1anMEeDbUZPquwEMGA8V3YPeWQJxFHDnu?usp=sharing)) 
+| Portland, OR | [Link to dataset]([https://drive.google.com/file/d/1twzSWqTj8FL6LIVdaljmrG394LMo3QZ8](https://drive.google.com/drive/folders/1anMEeDbUZPquwEMGA8V3YPeWQJxFHDnu?usp=sharing)) 
+
+
+## Benchmark
+
+PathwayBench provides utilities for evaluating graphs by the extent to which their structural characteristics align with ground truth, as described below.
+
+Partition test area: This step partitions the entire test area into Tessellating Intersection Polygons (TIP). Each TIP is created by assigning a point location to a road intersection, then computing the associated Voronoi polygons to tessellate the entire test area.
+
+  ```shell
+  python scripts/tessellate_area.py <Ground Truth GeoJSON>
+  ```  
+
+Compute statistics per TIP: This step computes the statistics (edge-retrieval F1 score, betweenness centrality, number of connected components, \textit{TraversabilitySimilarity}) for each TIP in the test area. The statistics computed in this step are useful for analyzing local graph routability.
+
+  ```shell
+  python scripts/compute_stats.py <Prediction GeoJSON> <Ground Truth GeoJSON> <TIP GeoJSON>
+  ```  
+
+Summarize statistics: This step aggregates the computed statistics from the previous step and provides summarizing statistics for the entire test area. The statistics computed in this step are useful for analyzing global graph routability. 
+\end{enumerate}
+
+  ```shell
+  python scripts/summarize_stats.py <Stats GeoJSON>
+  ```  
+
 
