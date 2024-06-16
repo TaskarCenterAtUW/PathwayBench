@@ -4,7 +4,7 @@
 
 This repository contains the PathwayBench dataset and benchmark for extracting routable pedestrian pathway graphs. The dataset includes aerial images, road graphs, road rasters, and ground truth data for multiple cities.
 
-- **Metadata**: [PathwayBench metadata](./metadata/PathwayBench_metadata.jsonld)
+- **Metadata**: [PathwayBench Croissant metadata](./metadata/PathwayBench_metadata.jsonld)
 - **License**: [ODbL](https://opendatacommons.org/licenses/odbl/)
 
 
