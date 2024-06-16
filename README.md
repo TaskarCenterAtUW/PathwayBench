@@ -38,6 +38,11 @@ Below are the links to the dataset that are currently supported by PathwayBench
 | Seattle, WA| [Link to dataset](https://drive.google.com/drive/folders/1CnTVuARwv7j-9WXXJpAb3l6NC3n0nhO9?usp=sharing)
 | Washington, D.C. | [Link to dataset](https://drive.google.com/drive/folders/1anMEeDbUZPquwEMGA8V3YPeWQJxFHDnu?usp=sharing)
 | Portland, OR | [Link to dataset](https://drive.google.com/drive/folders/1yFViA6PaDxqQWvS_iqDay65pEMijiS05?usp=sharing)
+| Bellevue, WA | [Will be released soon]
+| Quito, Ecuador | [Will be released soon]
+| Sao Paulo, Brazil | [Will be released soon]
+| Santiago, Chile | [Will be released soon]  
+| Valparaiso, Chile | [Will be released soon]  
 ## Benchmark
 
 PathwayBench provides utilities for evaluating graphs by the extent to which their structural characteristics align with ground truth, as described below.
