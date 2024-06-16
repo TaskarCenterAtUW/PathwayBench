@@ -212,10 +212,12 @@ def tile_tra_score(G, polygon):
 
     n_total = len(edge_pairs)
     n_connected = 0
+    connected_pairs = list()
     for pair in edge_pairs:
         is_connected = edges_are_connected(G, pts_line_map[pair[0]], pts_line_map[pair[1]])
         if is_connected:
             #print(f'{pair} is connected')
+            connected_pairs.append(pair)
             n_connected += 1
 
     #print(f'number of boundary pts {len(boundary_nodes)}')
@@ -242,24 +244,20 @@ def tile_tra_score(G, polygon):
 
     nx.draw_networkx_nodes(G, pos={node: pos[node] for node in boundary_nodes}, nodelist = boundary_nodes, node_color='red', node_size=20)
 
-    plt.savefig(f'new_{len(G.edges())}.png')
-    print(f'new_{len(G.edges())}.png saved')
     """
 
-    return n_total, n_connected 
+    return n_total, n_connected, connected_pairs 
+
 
 
 def compute_f1(pred, gt):
     E_THRES = 5
-    BUFF_DIS = 10
+    BUFF_DIS = 4
     pred_buff_gdf = None
-    d_sum = 0
     sw_cnt = 0
     sw_gt_cnt = 0
 
     num_splits = 5
-
-    d_lst = list()
 
     tp = 0
     fp = 0
@@ -287,16 +285,11 @@ def compute_f1(pred, gt):
                 distance_matched = pred_it_pts_gdf.sjoin_nearest(inter, distance_col="distances", how="inner")
                 distance_lst = distance_matched['distances'].tolist()
                 d_filter = [x for x in distance_lst if x <= E_THRES]
-                avg_d = np.average(np.array(d_filter))
-                d_lst.append(avg_d)
 
                 if len(d_filter) != 0:
-
                     tp += 1
-
                     sw_cnt += 1
                     sw_gt_cnt += len(d_filter)
-                    d_sum += avg_d
                 else:
                     fp += 1
 
@@ -318,7 +311,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         stats["bet_centrality_avg"] = mean(bet.values())
         stats["bet_stdev"] = stdev(bet.values())
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting betweenness value")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting betweenness value")
         stats["bet_centrality_avg"] = -99.99
         stats["bet_stdev"] = -99.99
 
@@ -327,7 +320,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         eigen = nx.eigenvector_centrality(undirected_g, max_iter=1000)
         stats["eig_centrality_avg"] = mean(eigen.values())
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting eigen value")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting eigen value")
         stats["eig_centrality_avg"] = -99.99
 
     # degree
@@ -335,7 +328,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         deg = nx.degree_centrality(undirected_g)
         stats["deg_centrality_avg"] = mean(deg.values())
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting degree cventrality")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting degree cventrality")
         stats["deg_centrality_avg"] = -99.99
 
     # number of connected components
@@ -343,7 +336,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         noc = nx.number_connected_components(undirected_g)
         stats["num_connect_comp_avg"] = noc
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting number of connected components")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting number of connected components")
         #traceback.print_exc()
         stats["num_connect_comp_avg"] = -99.99
 
@@ -352,7 +345,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         conn = nx.average_node_connectivity(undirected_g)
         stats["node_connect_avg"] = conn
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting node connectivity")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting node connectivity")
         #traceback.print_exc()
         stats["node_connect_avg"] = -99.99
 
@@ -361,20 +354,23 @@ def get_stats(polygon, G, gdf, gdf_gt):
         _, n_pahts = hull_connected_paths(undirected_g)
         stats["n_connect_paths"] = n_pahts
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting number of connected paths")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting number of connected paths")
         #traceback.print_exc()
         stats["n_connect_paths"] = -99.99
 
     # edge-to-edge connected paths
     try:
-        n_total, n_connected = tile_tra_score(undirected_g, polygon)
+        n_total, n_connected, connected_pairs = tile_tra_score(undirected_g, polygon)
         stats["n_total_edges"] = n_total
         stats["n_connect_edges"] = n_connected
+        connected_pairs_str = ' '.join([f"({t[0]},{t[1]})" for t in connected_pairs])
+        stats['connected_pairs'] = connected_pairs_str
     except Exception as e:
         print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting number of connected edge pairs")
-        #traceback.print_exc()
+        traceback.print_exc()
         stats["n_total_edges"] = -99.99
         stats["n_connect_edges"] = -99.99
+        stats['connected_pairs'] = "-99.99"
 
     # f1 score
     try:
@@ -387,12 +383,11 @@ def get_stats(polygon, G, gdf, gdf_gt):
         stats["recall"] = recall
         stats["f1"] = f1
     except Exception as e:
-        print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting f1 score")
+        #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting f1 score")
         #traceback.print_exc()
         stats["precision"] = -99.99
         stats["recall"] = -99.99
         stats["f1"] = -99.99
-
 
     return stats
 
@@ -455,6 +450,7 @@ def func(feature, gdf, gdf_gt):
         feature.loc['n_path'] = measures["n_connect_paths"]
         feature.loc['total_edges'] = measures["n_total_edges"]
         feature.loc['connect_edges'] = measures["n_connect_edges"]
+        feature.loc['connected_pairs'] = measures["connected_pairs"]
         feature.loc['precision'] = measures["precision"]
         feature.loc['recall'] = measures["recall"]
         feature.loc['f1'] = measures["f1"]
@@ -486,10 +482,11 @@ if __name__ == '__main__':
         ('n_path', 'object'),
         ('total_edges', 'object'),
         ('connect_edges', 'object'),
+        ('connected_pairs', 'object'),
         ('precision', 'object'),
         ('recall', 'object'),
         ('f1', 'object'),
         ], gdf=gdf, gdf_gt=gdf_gt).compute(scheduler='multiprocessing')
 
-    output.to_file(filepath.split('/')[-1].replace('.geojson','_eval.geojson'), driver='GeoJSON')
+    output.to_file(filepath.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
 

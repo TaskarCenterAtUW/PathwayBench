@@ -48,12 +48,12 @@ if __name__ == '__main__':
     filepath = sys.argv[1]
     gdf = gpd.read_file(filepath)
 
-    print('creating tileing ...')
+    print('creating TIPs ...')
     # find bbox of the prediction graph
     bbox = bounding_box_from_gdf(gdf)
     # find tileing within the bbox
     g_roads_simplified = ox.graph.graph_from_polygon(bbox, network_type = 'drive', simplify=True, retain_all=True)
     tile_gdf = create_voronoi_diagram(g_roads_simplified, bbox)
-    tile_gdf.to_file(filepath.split('/')[-1].replace('.geojson','_tiles.geojson'), driver='GeoJSON')
+    tile_gdf.to_file(filepath.split('/')[-1].replace('.geojson','_tip.geojson'), driver='GeoJSON')
 
 
