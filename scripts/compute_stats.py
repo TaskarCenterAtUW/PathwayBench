@@ -10,7 +10,7 @@ import dask_geopandas
 from statistics import stdev, mean
 #from osmapi import OsmApi
 import geonetworkx as gnx
-from shapely import Point, LineString, MultiLineString, Polygon
+from shapely import Point, LineString, MultiLineString, Polygon, MultiPolygon
 from shapely.ops import voronoi_diagram
 from scipy.spatial import ConvexHull
 from datetime import datetime
@@ -314,6 +314,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
         #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting betweenness value")
         stats["bet_centrality_avg"] = -99.99
         stats["bet_stdev"] = -99.99
+        traceback.print_exc()
 
     # eigen
     try:
@@ -322,6 +323,7 @@ def get_stats(polygon, G, gdf, gdf_gt):
     except Exception as e:
         #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting eigen value")
         stats["eig_centrality_avg"] = -99.99
+        traceback.print_exc()
 
     # degree
     try:
@@ -393,8 +395,9 @@ def get_stats(polygon, G, gdf, gdf_gt):
 
 
 def get_measures_from_polygon(polygon, gdf, gdf_gt):
-    gdf = gdf.to_crs(PROJ)
-    gdf_gt = gdf_gt.to_crs(PROJ)
+    if isinstance(polygon, MultiPolygon) and len(polygon.geoms)==1:
+        polygon = polygon.geoms[0]
+
 
     # crop gdf to the polygon
     #cropped_gdf = gdf
@@ -414,7 +417,7 @@ def get_measures_from_polygon(polygon, gdf, gdf_gt):
     return stats
 
 
-def compute_global_stats(gdf, filepath):
+def compute_global_stats(filepath):
     gdf = gpd.read_file(filepath)
     G = graph_from_gdf(gdf)
 
@@ -462,16 +465,28 @@ if __name__ == '__main__':
     filepath = sys.argv[1]
     gdf = gpd.read_file(filepath)
 
+    compute_global_stats(filepath)
+    exit()
+
     gt_filepath = sys.argv[2]
     gdf_gt = gpd.read_file(gt_filepath)
 
     tile_gdf = gpd.read_file(sys.argv[3])
+
+    gdf = gdf.to_crs(PROJ)
+    gdf_gt = gdf_gt.to_crs(PROJ)
+    tile_gdf = tile_gdf.to_crs(PROJ)
 
     # compute local stats
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=64)
 
     print('computing stats...')
     output = df_dask.apply(func, axis=1, meta=[
+        ('pk', 'object'),
+        ('project_id', 'object'),
+        ('task_id', 'object'),
+        ('numnodechanges', 'object'),
+        ('numwaychanges', 'object'),
         ('geometry', 'geometry'),
         ('degree','object'),
         ('eigen', 'object'),

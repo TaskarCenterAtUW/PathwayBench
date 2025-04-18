@@ -96,6 +96,29 @@ def compute_tra_jaccard(gdf1, gdf2):
     return r
 
 
+def tra_jaccard(row, gdf2):
+    index = row.name
+
+    row2 = gdf2.loc[index]
+
+    t1 = row['connected_pairs'] # pred
+    t2 = row2['connected_pairs'] # gt
+
+    set1 = str_2_set(t1)
+    set2 = str_2_set(t2)
+
+    inter = set1 & set2
+    union = set1 | set2
+
+    iou = 0
+    if len(union) > 0:
+        iou = len(inter)/len(union)
+
+    return iou
+
+def create_score_json(gdf1, gdf2):
+    gdf1['ts'] = gdf1.apply(tra_jaccard, axis=1, args=(gdf2,))
+
 
 if __name__ == "__main__":
     gdf1 = gpd.read_file(sys.argv[1]) # pred
@@ -103,9 +126,13 @@ if __name__ == "__main__":
 
     g_name = sys.argv[1].split('/')[-1]
 
+
     print(f"Avg degree for {g_name}: {compute_avg(gdf1, 'degree')}")
     print(f"Avg f1  score R for {g_name}: {compute_avg(gdf1, 'f1')}")
     print(f"Avg betweenness R for {g_name}: {compute_avg(gdf1, 'betweenness')}")
     print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
     print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
     print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
+
+    create_score_json(gdf1, gdf2)
+    gdf1.to_file(sys.argv[1].replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
