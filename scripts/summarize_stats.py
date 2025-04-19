@@ -135,4 +135,4 @@ if __name__ == "__main__":
     print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
 
     create_score_json(gdf1, gdf2)
-    gdf1.to_file(sys.argv[1].replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
+    # gdf1.to_file(sys.argv[1].replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
