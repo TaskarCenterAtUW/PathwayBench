@@ -6,14 +6,11 @@ import traceback
 import geopandas as gpd
 import numpy as np
 import osmnx as ox
-import dask_geopandas
 import math
 from statistics import stdev, mean
-import geonetworkx as gnx
 from shapely import Point, LineString, MultiLineString, Polygon
 from shapely.ops import voronoi_diagram
 from datetime import datetime
-from tqdm import tqdm
 import pandas as pd
 import matplotlib.pyplot as plt
 
@@ -96,6 +93,18 @@ def compute_tra_jaccard(gdf1, gdf2):
     return r
 
 
+def compute_f1(gdf):
+    tp = np.sum(np.array(gdf['tp']))
+    fp = np.sum(np.array(gdf['fp']))
+    fn = np.sum(np.array(gdf['fn']))
+
+    precision = tp/(tp+fp)
+    recall = tp/(tp+fn)
+    f1 = 2*(precision*recall)/(precision + recall)
+
+    return precision, recall, f1
+
+
 def tra_jaccard(row, gdf2):
     index = row.name
 
@@ -116,6 +125,7 @@ def tra_jaccard(row, gdf2):
 
     return iou
 
+
 def create_score_json(gdf1, gdf2):
     gdf1['ts'] = gdf1.apply(tra_jaccard, axis=1, args=(gdf2,))
 
@@ -126,13 +136,24 @@ if __name__ == "__main__":
 
     g_name = sys.argv[1].split('/')[-1]
 
+    if 'edge' in g_name:
+        # print(f"Avg degree for {g_name}: {compute_avg(gdf1, 'degree')}")
+        # print(f"Avg f1  score R for {g_name}: {compute_avg(gdf1, 'f1')}")
+        # print(f"Avg betweenness R for {g_name}: {compute_avg(gdf1, 'betweenness')}")
+        # print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
+        print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
+        print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
 
-    print(f"Avg degree for {g_name}: {compute_avg(gdf1, 'degree')}")
-    print(f"Avg f1  score R for {g_name}: {compute_avg(gdf1, 'f1')}")
-    print(f"Avg betweenness R for {g_name}: {compute_avg(gdf1, 'betweenness')}")
-    print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
-    print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
-    print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
+        precision, recall, f1 = compute_f1(gdf1)
+        print(f"Precision for {g_name}: {precision}")
+        print(f"Recall for {g_name}: {recall}")
+        print(f"F1 for {g_name}: {f1}")
+    else:
+        precision, recall, f1 = compute_f1(gdf1)
+        print(f"Precision for {g_name}: {precision}")
+        print(f"Recall for {g_name}: {recall}")
+        print(f"F1 for {g_name}: {f1}")
 
-    create_score_json(gdf1, gdf2)
+
+    # create_score_json(gdf1, gdf2)
     # gdf1.to_file(sys.argv[1].replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
