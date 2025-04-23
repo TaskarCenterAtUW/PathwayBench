@@ -298,46 +298,41 @@ def compute_f1(pred, gt, e_thres=5, buff_dis=4):
     return tp, fp
 
 
-def compute_f1_iou(pred, gt, buff_dis=4, iou_thres=0.5):
+def compute_f1_iou(pred, gt, buff_dis=5, iou_thres=0.1):
     tp = 0
     fp = 0
 
-    pred_sw = pred
-    gt_sw = gt
-
-    for it, pred_it in pred_sw.iterrows():
+    for it, pred_it in pred.iterrows():
         try:
             shape_geo = pred_it['geometry']
             pred_buffer = shape_geo.buffer(buff_dis)
 
-            # Buffer all GT geometries
-            gt_sw_buff = gt_sw.copy()
-            gt_sw_buff['geometry'] = gt_sw_buff['geometry'].buffer(buff_dis)
+            # Filter GT lines that intersect the prediction buffer
+            gt_filtered = gt[gt['geometry'].buffer(buff_dis).intersects(pred_buffer)]
 
-            # Compute intersection area (IOU-style logic)
-            gt_sw_buff['intersection_area'] = gt_sw_buff.intersection(pred_buffer).area
-            gt_sw_buff['union_area'] = gt_sw_buff.union(pred_buffer).area
-            gt_sw_buff['iou'] = gt_sw_buff['intersection_area'] / gt_sw_buff['union_area']
+            if gt_filtered.empty:
+                # print(f"No GT segments intersect prediction {it}")
+                fp += 1
+                continue
 
-            # Filter rows with valid IOU
-            gt_sw_buff = gt_sw_buff[gt_sw_buff['iou'] > 0]
+            # Union the nearby GT segments and buffer them
+            gt_union_geom = gt_filtered.unary_union.buffer(buff_dis)
 
-            if not gt_sw_buff.empty:
-                best_match = gt_sw_buff.sort_values(by='iou', ascending=False).iloc[0]
-                best_iou = best_match['iou']
+            # Compute IOU
+            intersection_area = pred_buffer.intersection(gt_union_geom).area
+            union_area = pred_buffer.union(gt_union_geom).area
+            iou = intersection_area / union_area if union_area != 0 else 0
 
-                # print(f"Best IOU for prediction {it}: {best_iou:.3f}")
+            # print(f"IOU for prediction {it}: {iou:.3f}")
 
-                if best_iou > iou_thres:
-                    tp += 1
-                else:
-                    fp += 1
+            if iou > iou_thres:
+                tp += 1
             else:
-                # print(f"No IOU match found for prediction {it}")
                 fp += 1
 
         except Exception as e:
             print(f"Error in processing prediction {it}: {e}")
+            fp += 1
 
     return tp, fp
 
@@ -581,7 +576,6 @@ def compute_node_score(feature, gdf, gdf_gt):
 
 
 if __name__ == '__main__':
-
     edges_path = sys.argv[1]
     nodes_path = sys.argv[2]
     gt_edges_path = sys.argv[3]
@@ -603,18 +597,32 @@ if __name__ == '__main__':
     # compute local stats
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=64)
 
-    # print('computing stats for edges...')
-    # output = df_dask.apply(compute_edge_score, axis=1, meta=[
-    #     ('geometry', 'geometry'),
-    #     ('total_edges', 'object'),
-    #     ('connect_edges', 'object'),
-    #     ('connected_pairs', 'object'),
-    #     ('tp', 'object'),
-    #     ('fp', 'object'),
-    #     ('fn', 'object'),
-    #     ], gdf=gdf, gdf_gt=gdf_gt).compute(scheduler='multiprocessing')
+    print('computing stats for edges...')
+    output = df_dask.apply(compute_edge_score, axis=1, meta=[
+        ('geometry', 'geometry'),
+        ('total_edges', 'object'),
+        ('connect_edges', 'object'),
+        ('connected_pairs', 'object'),
+        ('tp', 'object'),
+        ('fp', 'object'),
+        ('fn', 'object'),
+        ], gdf=edges_gdf, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
     
-    # output.to_file(edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+    output.to_file(edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+
+    output_gt = df_dask.apply(compute_edge_score, axis=1, meta=[
+    ('geometry', 'geometry'),
+    ('total_edges', 'object'),
+    ('connect_edges', 'object'),
+    ('connected_pairs', 'object'),
+    ('tp', 'object'),
+    ('fp', 'object'),
+    ('fn', 'object'),
+    ], gdf=edges_gdf_gt, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
+    
+    output_gt.to_file(gt_edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+
+    """
 
     print('computing stats for curb nodes...')
 
@@ -678,7 +686,7 @@ if __name__ == '__main__':
     ], gdf=pred_curb_link, gdf_gt=gt_curb_link).compute(scheduler='multiprocessing')
 
     curb_link_output.to_file(nodes_path.split('/')[-1].replace('.geojson','_curb_link_stats.geojson'), driver='GeoJSON')
-
+    """
 
 
 
