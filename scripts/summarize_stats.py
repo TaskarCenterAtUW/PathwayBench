@@ -132,7 +132,9 @@ def create_score_json(gdf1, gdf2):
 
 if __name__ == "__main__":
     gdf1 = gpd.read_file(sys.argv[1]) # pred
-    gdf2 = gpd.read_file(sys.argv[2]) # gt
+
+    if 'edge' in sys.argv[1]:
+        gdf2 = gpd.read_file(sys.argv[2]) # gt
 
     g_name = sys.argv[1].split('/')[-1]
 
@@ -148,7 +150,7 @@ if __name__ == "__main__":
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
-    else:
+    elif 'node' in g_name:
         precision, recall, f1 = compute_f1(gdf1)
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")

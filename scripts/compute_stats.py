@@ -352,14 +352,14 @@ def compute_f1_point_distance(pred, gt, dist_thres=4):
             gt['dist'] = gt['geometry'].distance(pred_pt)
             nearest_dist = gt['dist'].min()
 
-            print(f"Nearest distance for prediction {it}: {nearest_dist:.2f}")
+            # print(f"Nearest distance for prediction {it}: {nearest_dist:.2f}")
 
             if nearest_dist <= dist_thres:
                 tp += 1
             else:
                 fp += 1
         except Exception as e:
-            print(f"Error in processing prediction {it}: {e}")
+            # print(f"Error in processing prediction {it}: {e}")
             fp += 1
 
     return tp, fp
@@ -473,10 +473,11 @@ def get_stats(polygon, G, gdf, gdf_gt):
 def get_node_stats(polygon, G, gdf, gdf_gt):
     stats = {}
 
+    distance = 2.5
     # f1 score
     try:
-        tp, fp = compute_f1_iou(gdf, gdf_gt)
-        tp, fn = compute_f1_iou(gdf_gt, gdf)
+        tp, fp = compute_f1_point_distance(gdf, gdf_gt, distance)
+        tp, fn = compute_f1_point_distance(gdf_gt, gdf, distance)
         # precision = tp/(tp+fp)
         # recall = tp/(tp+fn)
         # f1 = 2*(precision*recall)/(precision + recall)
@@ -525,7 +526,7 @@ def get_node_measures_from_polygon(polygon, gdf, gdf_gt):
 
     G = graph_from_gdf(cropped_gdf) 
 
-    stats = get_stats(polygon, G, cropped_gdf, cropped_gdf_gt)
+    stats = get_node_stats(polygon, G, cropped_gdf, cropped_gdf_gt)
 
     return stats
 
@@ -581,52 +582,106 @@ def compute_node_score(feature, gdf, gdf_gt):
 
 if __name__ == '__main__':
 
-    filepath = sys.argv[1]
-    gdf = gpd.read_file(filepath)
+    edges_path = sys.argv[1]
+    nodes_path = sys.argv[2]
+    gt_edges_path = sys.argv[3]
+    gt_nodes_path = sys.argv[4]
+    tile_gdf = gpd.read_file(sys.argv[5])
 
-    # compute_global_stats(filepath)
+    edges_gdf = gpd.read_file(edges_path)
+    edges_gdf_gt = gpd.read_file(gt_edges_path)
 
-    gt_filepath = sys.argv[2]
-    gdf_gt = gpd.read_file(gt_filepath)
+    nodes_gdf = gpd.read_file(nodes_path)
+    nodes_gdf_gt = gpd.read_file(gt_nodes_path)
 
-    tile_gdf = gpd.read_file(sys.argv[3])
-
-    gdf = gdf.to_crs(PROJ)
-    gdf_gt = gdf_gt.to_crs(PROJ)
+    edges_gdf = edges_gdf.to_crs(PROJ)
+    edges_gdf_gt = edges_gdf_gt.to_crs(PROJ)
+    nodes_gdf = nodes_gdf.to_crs(PROJ)
+    nodes_gdf_gt = nodes_gdf_gt.to_crs(PROJ)
     tile_gdf = tile_gdf.to_crs(PROJ)
 
     # compute local stats
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=64)
 
-    if "edge" in filepath:
-        print('computing stats for edges...')
-        output = df_dask.apply(compute_edge_score, axis=1, meta=[
-            ('geometry', 'geometry'),
-            # ('degree','object'),
-            # ('eigen', 'object'),
-            # ('betweenness', 'object'), 
-            # ('bet_stdev', 'object'),
-            # ('noc', 'object'),
-            # ('conn', 'object'),
-            # ('n_path', 'object'),
-            ('total_edges', 'object'),
-            ('connect_edges', 'object'),
-            ('connected_pairs', 'object'),
-            ('tp', 'object'),
-            ('fp', 'object'),
-            ('fn', 'object'),
-            ], gdf=gdf, gdf_gt=gdf_gt).compute(scheduler='multiprocessing')
+    # print('computing stats for edges...')
+    # output = df_dask.apply(compute_edge_score, axis=1, meta=[
+    #     ('geometry', 'geometry'),
+    #     ('total_edges', 'object'),
+    #     ('connect_edges', 'object'),
+    #     ('connected_pairs', 'object'),
+    #     ('tp', 'object'),
+    #     ('fp', 'object'),
+    #     ('fn', 'object'),
+    #     ], gdf=gdf, gdf_gt=gdf_gt).compute(scheduler='multiprocessing')
+    
+    # output.to_file(edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
 
-    elif "node" in filepath:
-        print('computing stats for nodes...')
-        output = df_dask.apply(compute_node_score, axis=1, meta=[
-        ('geometry', 'geometry'),
-        ('tp', 'object'),
-        ('fp', 'object'),
-        ('fn', 'object'),
-        ], gdf=gdf, gdf_gt=gdf_gt).compute(scheduler='multiprocessing')
+    print('computing stats for curb nodes...')
 
+    pred_curb_gdf = nodes_gdf[nodes_gdf['ext:node_type'] == 'curb']
+    gt_curb_gdf = nodes_gdf_gt[nodes_gdf_gt['barrier'] == 'kerb']
+
+    curb_output = df_dask.apply(compute_node_score, axis=1, meta=[
+    ('geometry', 'geometry'),
+    ('tp', 'object'),
+    ('fp', 'object'),
+    ('fn', 'object'),
+    ], gdf=pred_curb_gdf, gdf_gt=gt_curb_gdf).compute(scheduler='multiprocessing')
+
+    curb_output.to_file(nodes_path.split('/')[-1].replace('.geojson','_curb_stats.geojson'), driver='GeoJSON')
 
 
-    output.to_file(filepath.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+    print('computing stats for curb and link nodes...')
+
+    ## find link nodes and join with curb nodes
+
+    # filter prediction
+    # First join: node_df1['_id'] == edge_df['_u_id']
+    merge_forward = pd.merge(pred_curb_gdf, edges_gdf, left_on='_id', right_on='_u_id')
+    merge_forward = pd.merge(merge_forward, nodes_gdf, left_on='_v_id', right_on='_id', suffixes=('', '_matched'))
+
+    # Second join: node_df1['_id'] == edge_df['_v_id']
+    merge_reverse = pd.merge(pred_curb_gdf, edges_gdf, left_on='_id', right_on='_v_id')
+    merge_reverse = pd.merge(merge_reverse, nodes_gdf, left_on='_u_id', right_on='_id', suffixes=('', '_matched'))
+
+    # Combine both sets of matches
+    pred_curb_link = pd.concat([merge_forward, merge_reverse], ignore_index=True)
+
+    pred_curb_link = pred_curb_link.drop(['geometry_x', 'geometry_y'], axis=1)
+
+    pred_curb_link = pred_curb_link.to_crs('epsg:26910')
+    pred_curb_link.to_file(nodes_path.split('/')[-1].replace('.geojson','_curbs_links.geojson'), driver='GeoJSON')
+    
+
+    # filter gt
+    # First join: node_df1['_id'] == edge_df['_u_id']
+    gt_merge_forward = pd.merge(gt_curb_gdf, edges_gdf_gt, left_on='_id', right_on='_u_id')
+    gt_merge_forward = pd.merge(gt_merge_forward, nodes_gdf_gt, left_on='_v_id', right_on='_id', suffixes=('', '_matched'))
+
+    # Second join: node_df1['_id'] == edge_df['_v_id']
+    gt_merge_reverse = pd.merge(gt_curb_gdf, edges_gdf_gt, left_on='_id', right_on='_v_id')
+    gt_merge_reverse = pd.merge(gt_merge_reverse, nodes_gdf_gt, left_on='_u_id', right_on='_id', suffixes=('', '_matched'))
+
+    # Combine both sets of matches
+    gt_curb_link = pd.concat([gt_merge_forward, gt_merge_reverse], ignore_index=True)
+
+    gt_curb_link = gt_curb_link.drop(['geometry_x', 'geometry_y'], axis=1)
+
+    # gt_curb_link = gt_curb_link.to_crs('epsg:26910')
+    # gt_curb_link.to_file(gt_nodes_path.split('/')[-1].replace('.geojson','_curbs_links.geojson'), driver='GeoJSON')
+
+    curb_link_output = df_dask.apply(compute_node_score, axis=1, meta=[
+    ('geometry', 'geometry'),
+    ('tp', 'object'),
+    ('fp', 'object'),
+    ('fn', 'object'),
+    ], gdf=pred_curb_link, gdf_gt=gt_curb_link).compute(scheduler='multiprocessing')
+
+    curb_link_output.to_file(nodes_path.split('/')[-1].replace('.geojson','_curb_link_stats.geojson'), driver='GeoJSON')
+
+
+
+
+
+
 
