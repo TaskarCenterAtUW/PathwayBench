@@ -298,7 +298,14 @@ def compute_f1(pred, gt, e_thres=5, buff_dis=4):
     return tp, fp
 
 
-def compute_f1_iou(pred, gt, buff_dis=5, iou_thres=0.1):
+def compute_angle(line):
+    start, end = line.coords[0], line.coords[-1]
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    return np.degrees(np.arctan2(dy, dx)) % 180  # Normalize to 0–180°
+
+
+def compute_f1_iou(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
     tp = 0
     fp = 0
 
@@ -306,12 +313,22 @@ def compute_f1_iou(pred, gt, buff_dis=5, iou_thres=0.1):
         try:
             shape_geo = pred_it['geometry']
             pred_buffer = shape_geo.buffer(buff_dis)
+            pred_angle = compute_angle(shape_geo)
 
             # Filter GT lines that intersect the prediction buffer
-            gt_filtered = gt[gt['geometry'].buffer(buff_dis).intersects(pred_buffer)]
+            gt_filtered = gt[gt['geometry'].buffer(buff_dis).intersects(pred_buffer)].copy()
 
             if gt_filtered.empty:
                 # print(f"No GT segments intersect prediction {it}")
+                fp += 1
+                continue
+
+            # Compute and filter by angle
+            gt_filtered['angle'] = gt_filtered['geometry'].apply(compute_angle)
+            gt_filtered = gt_filtered[gt_filtered['angle'].apply(lambda a: abs(a - pred_angle) < angle_thres)]
+
+            if gt_filtered.empty:
+                # print(f"No directionally aligned GT segments for prediction {it}")
                 fp += 1
                 continue
 
@@ -335,7 +352,6 @@ def compute_f1_iou(pred, gt, buff_dis=5, iou_thres=0.1):
             fp += 1
 
     return tp, fp
-
 
 def compute_f1_point_distance(pred, gt, dist_thres=4):
     tp = 0
