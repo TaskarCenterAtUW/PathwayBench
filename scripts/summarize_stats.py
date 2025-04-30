@@ -98,11 +98,15 @@ def compute_f1(gdf):
     fp = np.sum(np.array(gdf['fp']))
     fn = np.sum(np.array(gdf['fn']))
 
+    print(tp)
+    print(fp)
+    print(fn)
+
     precision = tp/(tp+fp)
     recall = tp/(tp+fn)
     f1 = 2*(precision*recall)/(precision + recall)
 
-    return precision, recall, f1
+    return np.round(precision,3), np.round(recall,3), np.round(f1,3)
 
 
 def tra_jaccard(row, gdf2):
@@ -143,8 +147,9 @@ if __name__ == "__main__":
         # print(f"Avg f1  score R for {g_name}: {compute_avg(gdf1, 'f1')}")
         # print(f"Avg betweenness R for {g_name}: {compute_avg(gdf1, 'betweenness')}")
         # print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
-        print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
-        print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
+
+        # print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
+        # print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
 
         precision, recall, f1 = compute_f1(gdf1)
         print(f"Precision for {g_name}: {precision}")
@@ -155,6 +160,12 @@ if __name__ == "__main__":
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
+    else:
+        precision, recall, f1 = compute_f1(gdf1)
+        print(f"Precision for {g_name}: {precision}")
+        print(f"Recall for {g_name}: {recall}")
+        print(f"F1 for {g_name}: {f1}")
+
 
 
     # create_score_json(gdf1, gdf2)
