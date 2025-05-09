@@ -44,16 +44,38 @@ def create_voronoi_diagram(G_roads_simplified, bounds):
     return voronoi_gdf_clipped
 
 
-if __name__ == '__main__':
-    filepath = sys.argv[1]
+def create_tip(filepath):
+    print('creating TIPs ...')
+
+    # --- Step 1: Read input ---
     gdf = gpd.read_file(filepath)
 
-    print('creating TIPs ...')
-    # find bbox of the prediction graph
-    bbox = bounding_box_from_gdf(gdf)
-    # find tileing within the bbox
-    g_roads_simplified = ox.graph.graph_from_polygon(bbox, network_type = 'drive', simplify=True, retain_all=True)
-    tile_gdf = create_voronoi_diagram(g_roads_simplified, bbox)
-    tile_gdf.to_file(filepath.split('/')[-1].replace('.geojson','_tip.geojson'), driver='GeoJSON')
+    # --- Step 2: Construct the convex hull boundary ---
+    multi_line = MultiLineString(gdf.geometry.values)
+    outer_boundary = multi_line.convex_hull
+
+    # --- Step 3: Extract road network within boundary ---
+    g_roads_simplified = ox.graph.graph_from_polygon(
+        outer_boundary,
+        network_type='drive',
+        simplify=True,
+        retain_all=True
+    )
+
+    # --- Step 4: Create Voronoi tiles ---
+    tile_gdf = create_voronoi_diagram(g_roads_simplified, outer_boundary)
+
+    # --- Step 5: Save to same directory with _tip.geojson suffix ---
+    input_dir = os.path.dirname(filepath)
+    input_filename = os.path.basename(filepath)
+    output_filename = input_filename.replace('.geojson', '_tip.geojson')
+    output_path = os.path.join(input_dir, output_filename)
+
+    tile_gdf.to_file(output_path, driver='GeoJSON')
+    print(f'TIP GeoJSON saved to: {output_path}')
+
+if __name__ == '__main__':
+    create_tip(sys.argv[1])
+
 
 

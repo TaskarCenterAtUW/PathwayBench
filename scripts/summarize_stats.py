@@ -93,14 +93,10 @@ def compute_tra_jaccard(gdf1, gdf2):
     return r
 
 
-def compute_f1(gdf):
+def compute_aggregate_f1(gdf):
     tp = np.sum(np.array(gdf['tp']))
     fp = np.sum(np.array(gdf['fp']))
     fn = np.sum(np.array(gdf['fn']))
-
-    print(tp)
-    print(fp)
-    print(fn)
 
     precision = tp/(tp+fp)
     recall = tp/(tp+fn)
@@ -149,19 +145,19 @@ if __name__ == "__main__":
         # print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
 
         # print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
-        # print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
+        print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
 
-        precision, recall, f1 = compute_f1(gdf1)
+        precision, recall, f1 = compute_aggregate_f1(gdf1)
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
     elif 'node' in g_name:
-        precision, recall, f1 = compute_f1(gdf1)
+        precision, recall, f1 = compute_aggregate_f1(gdf1)
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
     else:
-        precision, recall, f1 = compute_f1(gdf1)
+        precision, recall, f1 = compute_aggregate_f1(gdf1)
         print(f"Precision for {g_name}: {precision}")
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
