@@ -369,25 +369,34 @@ def compute_f1_iou_polygon(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
 
     for it, pred_it in pred.iterrows():
         try:
+            # add buffer to pred
             shape_geo = pred_it['geometry']
             if isinstance(shape_geo, Polygon):
                 pred_buffer = shape_geo
                 # pred_angle = compute_angle_from_centerline(shape_geo)
             elif isinstance(shape_geo, LineString):
-                pred_buffer = shape_geo.buffer(buff_dis)
+                pred_buffer = shape_geo.buffer(buff_dis, cap_style=2)
                 # pred_angle = compute_angle(shape_geo)
 
+            area_thres = 0.1
+
+            # add buffer to gt
             if isinstance(gt.iloc[0]['geometry'], Polygon):
-                gt_filtered = gt[gt['geometry'].intersects(pred_buffer)].copy()
+                gt_buffered = gt
             elif isinstance(gt.iloc[0]['geometry'], LineString):
-            # Filter GT lines that intersect the prediction buffer
-                gt_filtered = gt[gt['geometry'].buffer(buff_dis).intersects(pred_buffer)].copy()
-            else:
-                print(type(gt.iloc[0]['geometry']))
-                exit() 
+                gt_buffered = gt.copy()
+                gt_buffered['geometry'] = gt_buffered['geometry'].buffer(buff_dis, cap_style=2)
+
+            # filter by overlap
+            gt_buffered['intersect_area'] = gt_buffered['geometry'].intersection(pred_buffer).area
+
+            # print(gt_buffered)
+
+            # Filter: only keep rows where intersection area exceeds a threshold
+            gt_filtered = gt[gt_buffered['intersect_area'] > area_thres].copy()
 
             if gt_filtered.empty:
-                # print(f"No GT segments intersect prediction {it}")
+                print(f"No GT segments intersect prediction {pred_it}")
                 fp += 1
                 continue
 
@@ -400,7 +409,7 @@ def compute_f1_iou_polygon(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
             #     gt_filtered = gt_filtered[gt_filtered['angle'].apply(lambda a: abs(a - pred_angle) < angle_thres)]
 
             if gt_filtered.empty:
-                # print(f"No directionally aligned GT segments for prediction {it}")
+                print(f"No directionally aligned GT segments for prediction {pred_it}")
                 fp += 1
                 continue
 
@@ -408,7 +417,7 @@ def compute_f1_iou_polygon(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
             if isinstance(gt.iloc[0]['geometry'], Polygon):
                 gt_union_geom = gt_filtered.unary_union
             elif isinstance(gt.iloc[0]['geometry'], LineString):
-                gt_union_geom = gt_filtered.unary_union.buffer(buff_dis)
+                gt_union_geom = gt_filtered.unary_union.buffer(buff_dis, cap_style=2)
 
             # Compute IOU
             intersection_area = pred_buffer.intersection(gt_union_geom).area
@@ -431,20 +440,43 @@ def compute_f1_iou_polygon(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
 
 
 def compute_f1_iou(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
+    # buff_dis=0.5
+    # angle_thres= 10 
+    # area_thres = 0.01 # just to exclue lines
     tp = 0
     fp = 0
+
+    # print("Equal:", pred.equals(gt))                  # Strict: everything must match
+    # print("CRS Equal:", pred.crs == gt.crs)           # Check CRS
+    # print("Geometry Equal:", pred.geometry.equals(gt.geometry))  # Just geometry
+    # print("IDs Equal:", all(pred['_id'] == gt['_id']))  # ID columns
 
     for it, pred_it in pred.iterrows():
         try:
             shape_geo = pred_it['geometry']
-            pred_buffer = shape_geo.buffer(buff_dis)
+            pred_buffer = shape_geo.buffer(buff_dis, cap_style=2)
             pred_angle = compute_angle(shape_geo)
 
             # Filter GT lines that intersect the prediction buffer
-            gt_filtered = gt[gt['geometry'].buffer(buff_dis).intersects(pred_buffer)].copy()
+            # gt_filtered = gt[gt['geometry'].buffer(buff_dis, cap_style=2).intersects(pred_buffer)].copy()
+
+            # Set dynamic area threshold based on segment length
+            area_thres = shape_geo.length * buff_dis * 0.25
+
+            # Buffer ground truth geometries
+            gt_buffered = gt.copy()
+            gt_buffered['geometry'] = gt_buffered['geometry'].buffer(buff_dis, cap_style=2)
+
+            # Compute intersection area with pred_buffer
+            gt_buffered['intersect_area'] = gt_buffered['geometry'].intersection(pred_buffer).area
+
+            # print(gt_buffered)
+
+            # Filter: only keep rows where intersection area exceeds a threshold
+            gt_filtered = gt[gt_buffered['intersect_area'] > area_thres].copy()
 
             if gt_filtered.empty:
-                # print(f"No GT segments intersect prediction {it}")
+                # print(f"No GT segments intersect prediction with sufficient area {pred_it} ")
                 fp += 1
                 continue
 
@@ -453,17 +485,27 @@ def compute_f1_iou(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
             gt_filtered = gt_filtered[gt_filtered['angle'].apply(lambda a: abs(a - pred_angle) < angle_thres)]
 
             if gt_filtered.empty:
-                # print(f"No directionally aligned GT segments for prediction {it}")
+                # print(f"No directionally aligned GT segments for prediction {pred_it}")
                 fp += 1
                 continue
-
+            
             # Union the nearby GT segments and buffer them
-            gt_union_geom = gt_filtered.unary_union.buffer(buff_dis)
+            gt_union_geom = gt_filtered.unary_union.buffer(buff_dis, cap_style=2)
+
 
             # Compute IOU
+
             intersection_area = pred_buffer.intersection(gt_union_geom).area
             union_area = pred_buffer.union(gt_union_geom).area
             iou = intersection_area / union_area if union_area != 0 else 0
+
+
+            # print(f'pred {pred_buffer.area}')
+            # print(f'gt {gt_union_geom.area}')
+            # print(f'intersection {intersection_area}')
+            # print(f'union {union_area}')
+            # print(f'iou {iou}')
+
 
             # print(f"IOU for prediction {it}: {iou:.3f}")
 
@@ -471,10 +513,31 @@ def compute_f1_iou(pred, gt, buff_dis=4, iou_thres=0.1, angle_thres=30):
                 tp += 1
             else:
                 print(iou)
+                print(pred_it['_id'])
                 fp += 1
 
+                ## debug #################################
+                ## Save for debugging
+                # debug_pred_buffer = gpd.GeoDataFrame({'geometry': [pred_buffer]}, crs=gt.crs)
+                # gt_buffered = gt.copy()
+                # gt_buffered['geometry'] = gt_buffered['geometry'].buffer(buff_dis, cap_style=2)
+                # debug_gt_buffered = gt_buffered
+
+                # # Optionally save to disk
+                # debug_pred_buffer.to_file("debug_pred_buffer.geojson", driver="GeoJSON")
+                # debug_gt_buffered.to_file("debug_gt_buffered.geojson", driver="GeoJSON")
+
+                # ## Wrap into GeoDataFrame for export or inspection
+                # debug_gt_union = gpd.GeoDataFrame({'geometry': [gt_union_geom]}, crs=gt_filtered.crs)
+                # # Optionally save to GeoJSON for debugging
+                # debug_gt_union.to_file("debug_gt_union_buffer.geojson", driver="GeoJSON")
+                
+                # sidewalk_id = pred_it['_id']
+                # gt_filtered.to_file(f'{sidewalk_id}_gt_union.geojson', driver='GeoJSON')
+                ############################################
+
         except Exception as e:
-            print(f"Error in processing prediction {it}: {e}")
+            print(f"Error in processing prediction {pred_it}: {e}")
             fp += 1
 
     return tp, fp
@@ -508,8 +571,8 @@ def get_stats_polygon(polygon, G, gdf, gdf_gt):
 
     # f1 score
     try:
-        tp, fp = compute_f1_iou_polygon(gdf, gdf_gt,buff_dis=5, iou_thres=0.1, angle_thres=30)
-        # tp, fn = compute_f1_iou_polygon(gdf_gt, gdf,buff_dis=5, iou_thres=0.1, angle_thres=30)
+        tp, fp = compute_f1_iou_polygon(gdf, gdf_gt,buff_dis=2.5, iou_thres=0.1, angle_thres=30)
+        tp, fn = compute_f1_iou_polygon(gdf_gt, gdf,buff_dis=2.5, iou_thres=0.1, angle_thres=30)
 
         stats["tp"] = tp
         stats["fp"] = fp
@@ -614,10 +677,16 @@ def get_stats(polygon, G, gdf, gdf_gt):
 
     # f1 score
     try:
-        # tp, fp = compute_f1_iou(gdf, gdf_gt,buff_dis=5, iou_thres=0.1, angle_thres=30)
-        # tp, fn = compute_f1_iou(gdf_gt, gdf,buff_dis=5, iou_thres=0.1, angle_thres=30)
-        tp, fp = compute_f1(gdf, gdf_gt)
-        tp, fn = compute_f1(gdf_gt, gdf)
+        # print("Equal:", gdf.equals(gdf_gt))                  # Strict: everything must match
+        # print("CRS Equal:", gdf.crs == gdf_gt.crs)           # Check CRS
+        # print("Geometry Equal:", gdf.geometry.equals(gdf_gt.geometry))  # Just geometry
+        # print("IDs Equal:", all(gdf['_id'] == gdf_gt['_id']))  # ID columns
+
+        tp, fp = compute_f1_iou(gdf, gdf_gt, buff_dis=2.5, iou_thres=0.1, angle_thres=10)
+        tp, fn = compute_f1_iou(gdf_gt, gdf, buff_dis=2.5, iou_thres=0.1, angle_thres=10)
+
+        # tp, fp = compute_f1(gdf, gdf_gt)
+        # tp, fn = compute_f1(gdf_gt, gdf)
         # precision = tp/(tp+fp)
         # recall = tp/(tp+fn)
         # f1 = 2*(precision*recall)/(precision + recall)
@@ -671,7 +740,6 @@ def get_measures_from_polygon(polygon, gdf, gdf_gt):
     stats = get_stats(polygon, G, cropped_gdf, cropped_gdf_gt)
     # stats = get_stats_polygon(polygon, G, cropped_gdf, cropped_gdf_gt)
 
-    
     #direct_trust_score, time_trust_score = analyze_sidewalk_data(G)
     #stats["direct_trust_score"] = direct_trust_score
     #stats["time_trust_score"] = time_trust_score
@@ -716,6 +784,7 @@ def compute_global_stats(filepath):
 
 
 def compute_edge_score(feature, gdf, gdf_gt):
+
     poly = feature.geometry
     if (poly.geom_type == "Polygon" or poly.geom_type == "MultiPolygon"):
         measures = get_measures_from_polygon(poly, gdf, gdf_gt)
@@ -767,20 +836,23 @@ if __name__ == '__main__':
     tile_gdf = tile_gdf.to_crs(PROJ)
 
     # compute local stats
-    df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=64)
+    df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=1)
 
     print('computing stats for edges...')
-    output = df_dask.apply(compute_edge_score, axis=1, meta=[
-        ('geometry', 'geometry'),
-        # ('total_edges', 'object'),
-        # ('connect_edges', 'object'),
-        # ('connected_pairs', 'object'),
-        ('tp', 'object'),
-        ('fp', 'object'),
-        ('fn', 'object'),
-        ], gdf=edges_gdf, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
+    # output = df_dask.apply(compute_edge_score, axis=1, meta=[
+    #     ('geometry', 'geometry'),
+    #     # ('total_edges', 'object'),
+    #     # ('connect_edges', 'object'),
+    #     # ('connected_pairs', 'object'),
+    #     ('tp', 'object'),
+    #     ('fp', 'object'),
+    #     ('fn', 'object'),
+    #     ], gdf=edges_gdf, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
     
-    output.to_file(edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+    # output.to_file(edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+
+    # edges_gdf_gt = edges_gdf_gt[edges_gdf_gt['_id'] == '846896']
+    # edges_gdf_gt = edges_gdf_gt[edges_gdf_gt['_id'] == '959833']
 
     output_gt = df_dask.apply(compute_edge_score, axis=1, meta=[
     ('geometry', 'geometry'),
@@ -793,6 +865,11 @@ if __name__ == '__main__':
     ], gdf=edges_gdf_gt, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
     
     output_gt.to_file(gt_edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+    
+    # Run sequentially using .apply instead of Dask
+    # output_gt = tile_gdf.apply(compute_edge_score, axis=1, args=(edges_gdf_gt, edges_gdf_gt))
+    # output_gt.to_file(gt_edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+    exit()
 
     """
 
