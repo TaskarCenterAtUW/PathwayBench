@@ -1,6 +1,7 @@
 import os
 os.environ['USE_PYGEOS'] = '0'
 import networkx as nx
+import argparse
 import sys
 import copy
 import traceback
@@ -360,32 +361,53 @@ def compute_node_score(feature, gdf, gdf_gt):
         return feature
 
 
+def read_gdf(p):
+    return gpd.read_file(p)
+
+
 if __name__ == '__main__':
-    edges_path = sys.argv[1]
-    nodes_path = sys.argv[2]
-    gt_edges_path = sys.argv[3]
-    gt_nodes_path = sys.argv[4]
+    parser = argparse.ArgumentParser(
+        description="Load tile + edges (+ optional nodes) and project to CRS."
+    )
+    # required
+    parser.add_argument("tile_path", help="Path to tile polygon GeoData (e.g., .geojson/.shp)")
+    parser.add_argument("edges_path", help="Path to predicted edges")
+    parser.add_argument("gt_edges_path", help="Path to ground-truth edges")
 
-    E_THRESHOLD = float(sys.argv[5])
+    # optional positional pair
+    parser.add_argument("nodes_path", nargs="?", help="Path to predicted nodes (optional)")
+    parser.add_argument("gt_nodes_path", nargs="?", help="Path to ground-truth nodes (optional)")
 
-    if len(sys.argv) > 6:
-        tile_gdf = gpd.read_file(sys.argv[6])
-    else:
-        print(f'Intesection polygon not given, computing ...')
-        create_tip(gt_edges_path)
-        tile_gdf = gpd.read_file(gt_edges_path.replace('.geojson', '_tip.geojson'))
+    # optional flag with default
+    parser.add_argument("--e-threshold", type=float, default=5,
+                        help="Edge threshold (float), default = 0.5")
 
-    edges_gdf = gpd.read_file(edges_path)
-    edges_gdf_gt = gpd.read_file(gt_edges_path)
+    args = parser.parse_args()
 
-    nodes_gdf = gpd.read_file(nodes_path)
-    nodes_gdf_gt = gpd.read_file(gt_nodes_path)
+    # Read required
+    tile_gdf = read_gdf(args.tile_path)
+    edges_gdf = read_gdf(args.edges_path)
+    edges_gdf_gt = read_gdf(args.gt_edges_path)
 
+    # Optional nodes (all-or-nothing)
+    nodes_gdf = nodes_gdf_gt = None
+    if args.nodes_path or args.gt_nodes_path:
+        if not (args.nodes_path and args.gt_nodes_path):
+            parser.error("If providing nodes, you must pass BOTH NODES_PATH and GT_NODES_PATH.")
+        nodes_gdf = read_gdf(args.nodes_path)
+        nodes_gdf_gt = read_gdf(args.gt_nodes_path)
+
+    # Reproject everything provided
+    tile_gdf = tile_gdf.to_crs(PROJ)
     edges_gdf = edges_gdf.to_crs(PROJ)
     edges_gdf_gt = edges_gdf_gt.to_crs(PROJ)
-    nodes_gdf = nodes_gdf.to_crs(PROJ)
-    nodes_gdf_gt = nodes_gdf_gt.to_crs(PROJ)
-    tile_gdf = tile_gdf.to_crs(PROJ)
+    if nodes_gdf is not None:
+        nodes_gdf = nodes_gdf.to_crs(PROJ)
+        nodes_gdf_gt = nodes_gdf_gt.to_crs(PROJ)
+
+    # Threshold is always set now
+    E_THRESHOLD = args.e_threshold
+
 
     # compute local stats
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=32)
@@ -402,7 +424,7 @@ if __name__ == '__main__':
         ('fn', 'object'),
         ], gdf=edges_gdf, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
     
-    edge_save_path = edges_path.replace('.geojson','_stats.geojson')
+    edge_save_path = args.edges_path.replace('.geojson','_stats.geojson')
     output.to_file(edge_save_path, driver='GeoJSON')
     print(f'{edge_save_path} saved')
 
@@ -417,13 +439,16 @@ if __name__ == '__main__':
     ('fn', 'object'),
     ], gdf=edges_gdf_gt, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
     
-    gt_edge_save_path = gt_edges_path.replace('.geojson','_stats.geojson')
+    gt_edge_save_path = args.gt_edges_path.replace('.geojson','_stats.geojson')
     output_gt.to_file(gt_edge_save_path, driver='GeoJSON')
     print(f'{gt_edge_save_path} saved')
     
     # Run sequentially using .apply instead of Dask
     # output_gt = tile_gdf.apply(compute_edge_score, axis=1, args=(edges_gdf_gt, edges_gdf_gt))
     # output_gt.to_file(gt_edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
+
+    if not args.nodes_path:
+        exit()
 
     print('computing stats for curb nodes...')
 
