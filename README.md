@@ -53,16 +53,9 @@ Partition test area: This step partitions the entire test area into Tessellating
   python scripts/tessellate_area.py <Ground Truth GeoJSON>
   ```  
 
-Compute statistics per TIP: This step computes the statistics (edge-retrieval F1 score, betweenness centrality, number of connected components, TraversabilitySimilarity) for each TIP in the test area. The statistics computed in this step are useful for analyzing local graph routability. `Prediction GeoJSON` is the prediction graph GeoJSON, `TIP GeoJSON` is the area partition generated in the previous step. 
+Compute scores: This step computes the scroes (edge-retrieval F1 score, edge TraversabilitySimilarity, node F1 score) for the test area. `TIP GeoJSON` is the area partition generated in the previous step. 
 
   ```shell
-  python scripts/compute_scores.py <TIP GeoJSON> <Prediction GeoJSON> <Ground Truth GeoJSON>
+  python scripts/compute_scores.py <TIP GeoJSON> <Prediction Edge GeoJSON> <Ground Truth Edge GeoJSON> <Prediction Node GeoJSON> <Ground Truth Node GeoJSON>
   ```  
-
-Summarize statistics: This step aggregates the computed statistics from the previous step and provides summarizing statistics for the entire test area. The statistics computed in this step are useful for analyzing global graph routability. `Prediction Stats GeoJSON` and `GT Stats GeoJSON` are generated in the previous step.
-
-  ```shell
-  python scripts/summarize_stats.py <Prediction Stats GeoJSON> <GT Stats GeoJSON>
-  ```  
-
 
