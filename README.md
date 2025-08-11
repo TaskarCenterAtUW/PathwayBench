@@ -60,7 +60,6 @@ Compute statistics per TIP: This step computes the statistics (edge-retrieval F1
   ```  
 
 Summarize statistics: This step aggregates the computed statistics from the previous step and provides summarizing statistics for the entire test area. The statistics computed in this step are useful for analyzing global graph routability. `Prediction Stats GeoJSON` and `GT Stats GeoJSON` are generated in the previous step.
-\end{enumerate}
 
   ```shell
   python scripts/summarize_stats.py <Prediction Stats GeoJSON> <GT Stats GeoJSON>

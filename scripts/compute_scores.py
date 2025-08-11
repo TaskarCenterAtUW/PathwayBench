@@ -462,7 +462,7 @@ if __name__ == '__main__':
     ('fn', 'object'),
     ], gdf=pred_curb_gdf, gdf_gt=gt_curb_gdf).compute(scheduler='multiprocessing')
 
-    curb_node_save_path = nodes_path.replace('.geojson','_curb_stats.geojson')
+    curb_node_save_path = args.nodes_path.replace('.geojson','_curb_stats.geojson')
     curb_output.to_file(curb_node_save_path, driver='GeoJSON')
     print(f'{curb_node_save_path} saved')
 
@@ -511,11 +511,11 @@ if __name__ == '__main__':
     ('fn', 'object'),
     ], gdf=pred_curb_link, gdf_gt=gt_curb_link).compute(scheduler='multiprocessing')
 
-    curb_link_save_path = nodes_path.replace('.geojson','_curb_link_stats.geojson')
+    curb_link_save_path = args.nodes_path.replace('.geojson','_curb_link_stats.geojson')
     curb_link_output.to_file(curb_link_save_path, driver='GeoJSON')
     print(f'{curb_link_save_path} saved')
 
-    print(f'stats for {edges_path} at threshold {E_THRESHOLD} meter')
+    print(f'stats for {args.edges_path} at threshold {E_THRESHOLD} meter')
 
     # Compute and print summary stats
     print('edge stats: ')
