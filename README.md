@@ -12,13 +12,13 @@ This repository contains the PathwayBench dataset and benchmark for extracting r
 
 ```shell
 # create and activate the conda environment
-conda create -n pathwaybench python=3.8
+conda create -n pathwaybench python=3.9
 conda activate pathwaybench
 
 # install the necessary packages with `requirements.txt`:
 pip install -r requirements.txt
 ```
-This code has been tested with Python 3.8 on Ubuntu 20.04. 
+This code has been tested with Python 3.9 on Ubuntu 20.04. 
 
 ## Datasets
 Each set of samples in the PathwayBench dataset includes five co-registered features. The filename of each set of samples and the corresponding features are listed below:
