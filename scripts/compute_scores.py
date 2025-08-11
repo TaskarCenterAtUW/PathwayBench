@@ -447,6 +447,16 @@ if __name__ == '__main__':
     # output_gt = tile_gdf.apply(compute_edge_score, axis=1, args=(edges_gdf_gt, edges_gdf_gt))
     # output_gt.to_file(gt_edges_path.split('/')[-1].replace('.geojson','_stats.geojson'), driver='GeoJSON')
 
+    # Compute and print summary stats for edges
+    print('edge stats: ')
+    pred_stats = gpd.read_file(edge_save_path)
+    gt_stats = gpd.read_file(gt_edge_save_path)
+    print(f"TraversabilitySimilarity: {compute_tra_jaccard(pred_stats, gt_stats)}")
+    precision, recall, f1 = compute_aggregate_f1(pred_stats)
+    print(f"Precision: {precision}")
+    print(f"Recall: {recall}")
+    print(f"F1: {f1}")
+
     if not args.nodes_path:
         exit()
 
@@ -517,16 +527,7 @@ if __name__ == '__main__':
 
     print(f'stats for {args.edges_path} at threshold {E_THRESHOLD} meter')
 
-    # Compute and print summary stats
-    print('edge stats: ')
-    pred_stats = gpd.read_file(edge_save_path)
-    gt_stats = gpd.read_file(gt_edge_save_path)
-    print(f"TraversabilitySimilarity: {compute_tra_jaccard(pred_stats, gt_stats)}")
-    precision, recall, f1 = compute_aggregate_f1(pred_stats)
-    print(f"Precision: {precision}")
-    print(f"Recall: {recall}")
-    print(f"F1: {f1}")
-
+    # Compute and print summary stats for nodes
     curb_node_stats = gpd.read_file(curb_node_save_path)
     print('curb node stats: ')
     precision, recall, f1 = compute_aggregate_f1(curb_node_stats)
