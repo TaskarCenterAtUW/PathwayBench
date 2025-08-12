@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from tessellate_area import create_tip
-from summarize_stats import compute_aggregate_f1, compute_tra_jaccard
+from summarize_stats import compute_aggregate_f1, compute_tra_jaccard, create_score_json
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -198,6 +198,7 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5):
             pred_it_pts = [pred_it['geometry'].interpolate((i/num_splits), normalized=True) for i in range(1, num_splits)]
             # pred_it_pts_gdf = gpd.GeoDataFrame({'geometry': pred_it_pts}, crs=pred_copy.crs)
 
+            avg_d = 1e5
             if not inter.empty:
                 # distance_matched = pred_it_pts_gdf.sjoin_nearest(inter, distance_col="distances", how="inner")
                 # distance_lst = distance_matched['distances'].tolist()
@@ -211,7 +212,7 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5):
                 if len(d_filter) > 0:
                     avg_d = np.average(d_filter)
                 else:
-                    avg_d = 99999
+                    avg_d = 1e5
 
                 if avg_d < e_thres:
                     tp += 1
@@ -456,6 +457,10 @@ if __name__ == '__main__':
     print(f"Precision: {precision}")
     print(f"Recall: {recall}")
     print(f"F1: {f1}")
+
+    # Optional: Also save the per-TIP Traversability Similarity score geojson 
+    create_score_json(pred_stats, gt_stats)
+    pred_stats.to_file(edge_save_path.replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
 
     if not args.nodes_path:
         exit()

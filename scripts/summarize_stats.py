@@ -162,7 +162,6 @@ if __name__ == "__main__":
         print(f"Recall for {g_name}: {recall}")
         print(f"F1 for {g_name}: {f1}")
 
-
-
+    # Optional: Also save the per-TIP Traversability Similarity score geojson 
     # create_score_json(gdf1, gdf2)
     # gdf1.to_file(sys.argv[1].replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")
