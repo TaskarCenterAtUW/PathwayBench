@@ -11,7 +11,7 @@ from statistics import stdev, mean
 #from osmapi import OsmApi
 import geonetworkx as gnx
 from shapely import Point, LineString, MultiLineString, Polygon
-from shapely.ops import voronoi_diagram
+from shapely.ops import voronoi_diagram, unary_union
 from scipy.spatial import ConvexHull
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -51,8 +51,8 @@ def create_tip(filepath):
     gdf = gpd.read_file(filepath)
 
     # --- Step 2: Construct the convex hull boundary ---
-    multi_line = MultiLineString(gdf.geometry.values)
-    outer_boundary = multi_line.convex_hull
+    merged = unary_union(gdf.geometry)
+    outer_boundary = merged.convex_hull
 
     # --- Step 3: Extract road network within boundary ---
     g_roads_simplified = ox.graph.graph_from_polygon(
