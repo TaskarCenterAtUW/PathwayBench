@@ -129,7 +129,6 @@ def tra_jaccard(row, gdf2):
 def create_score_json(gdf1, gdf2):
     gdf1['ts'] = gdf1.apply(tra_jaccard, axis=1, args=(gdf2,))
 
-
 if __name__ == "__main__":
     gdf1 = gpd.read_file(sys.argv[1]) # pred
 
@@ -144,7 +143,7 @@ if __name__ == "__main__":
         # print(f"Avg betweenness R for {g_name}: {compute_avg(gdf1, 'betweenness')}")
         # print(f"Avg number of connected components for {g_name}: {compute_avg(gdf1, 'noc')}")
 
-        # print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
+        print(f"Traversability R for {g_name}: {compute_tra_avg(gdf1)}")
         print(f"TraversabilitySimilarity for {g_name}: {compute_tra_jaccard(gdf1, gdf2)}")
 
         precision, recall, f1 = compute_aggregate_f1(gdf1)

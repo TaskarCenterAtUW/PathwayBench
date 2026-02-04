@@ -3,7 +3,7 @@
 # Usage: ./evaluate_sam.sh sam_road
 
 # Root directory of your project
-ROOT_DIR="/home/yz325/Documents/PathwayBench"
+ROOT_DIR="/home/yz325/PathwayBench"
 
 # Input argument for dataset name (default to sam_road if not provided)
 DATASET_NAME=${1:-sam_road}
