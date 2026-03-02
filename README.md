@@ -35,9 +35,9 @@ Each set of samples in the PathwayBench dataset includes five co-registered feat
 Below are the links to the dataset that are currently supported by PathwayBench
 | City | Data |
 |--|--|
-| Seattle, WA| [Link to dataset](https://drive.google.com/drive/folders/1CnTVuARwv7j-9WXXJpAb3l6NC3n0nhO9?usp=sharing)
-| Washington, D.C. | [Link to dataset](https://drive.google.com/drive/folders/1anMEeDbUZPquwEMGA8V3YPeWQJxFHDnu?usp=sharing)
-| Portland, OR | [Link to dataset](https://drive.google.com/drive/folders/1yFViA6PaDxqQWvS_iqDay65pEMijiS05?usp=sharing)
+| Seattle, WA| [Link to dataset](https://drive.google.com/drive/folders/1Rbpah5J-9xtw3UM1SpZQPk0Fc_p6f6dB?usp=drive_link)
+| Washington, D.C. | [Link to dataset](https://drive.google.com/drive/folders/1GGPCVdJKPaZ_JFfVRjcWabY1hZQ2N7XY?usp=drive_link)
+| Portland, OR | [Link to dataset](https://drive.google.com/drive/folders/1xyyU3fRlNwsKARdaAhBXzSzXMwWqM0Y0?usp=drive_link)
 | Bellevue, WA | [Will be released soon]
 | Quito, Ecuador | [Will be released soon]
 | Sao Paulo, Brazil | [Will be released soon]
