@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from tessellate_area import create_tip
-from summarize_stats import compute_aggregate_f1, compute_tra_jaccard, create_score_json
+from summarize_stats import compute_aggregate_f1, compute_aggregate_avg_d, compute_tra_jaccard, create_score_json
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -176,6 +176,7 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5):
 
     tp = 0
     fp = 0
+    avg_d_list = []
 
     pred_sw = pred
     gt_sw = gt
@@ -219,13 +220,18 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5):
                     tp += 1
                 else:
                     fp += 1
+                avg_d_list.append(avg_d)
 
         except Exception as e:
             traceback.print_exc()
             #exit()
             continue
 
-    return tp, fp
+    agg_avg_d = -99.99
+    if len(avg_d_list) > 0:
+        agg_avg_d = float(np.average(avg_d_list))
+
+    return tp, fp, agg_avg_d
 
 
 def compute_f1_point_distance(pred, gt, dist_thres=4):
@@ -301,20 +307,22 @@ def get_stats(polygon, G, gdf, gdf_gt):
 
     # f1 score
     try:
-        tp, fp = compute_f1(gdf, gdf_gt, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
-        tp, fn = compute_f1(gdf_gt, gdf, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
+        tp, fp, avg_d = compute_f1(gdf, gdf_gt, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
+        tp, fn, _ = compute_f1(gdf_gt, gdf, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
         # precision = tp/(tp+fp)
         # recall = tp/(tp+fn)
         # f1 = 2*(precision*recall)/(precision + recall)
         stats["tp"] = tp
         stats["fp"] = fp
         stats["fn"] = fn
+        stats["avg_d"] = avg_d
     except Exception as e:
         #print(f"Unexpected {e}, {type(e)} with polygon {polygon} when getting f1 score")
         #traceback.print_exc()
         stats["tp"] = -99.99
         stats["fp"] = -99.99
         stats["fn"] = -99.99
+        stats["avg_d"] = -99.99
     return stats
 
 
@@ -385,6 +393,7 @@ def compute_edge_score(feature, gdf, gdf_gt):
         feature.loc['tp'] = measures["tp"]
         feature.loc['fp'] = measures["fp"]
         feature.loc['fn'] = measures["fn"]
+        feature.loc['avg_d'] = measures["avg_d"]
         return feature
     
 
@@ -460,6 +469,7 @@ if __name__ == '__main__':
             ('tp', 'object'),
             ('fp', 'object'),
             ('fn', 'object'),
+            ('avg_d', 'object'),
             ], gdf=edges_gdf, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
         
         edge_save_path = args.edges_path.replace('.geojson','_stats.geojson')
@@ -474,6 +484,7 @@ if __name__ == '__main__':
         ('tp', 'object'),
         ('fp', 'object'),
         ('fn', 'object'),
+        ('avg_d', 'object'),
         ], gdf=edges_gdf_gt, gdf_gt=edges_gdf_gt).compute(scheduler='multiprocessing')
         
         gt_edge_save_path = args.gt_edges_path.replace('.geojson','_stats.geojson')
@@ -485,9 +496,11 @@ if __name__ == '__main__':
         gt_stats = gpd.read_file(gt_edge_save_path)
         print(f"TraversabilitySimilarity: {compute_tra_jaccard(pred_stats, gt_stats)}")
         precision, recall, f1 = compute_aggregate_f1(pred_stats)
+        avg_d = compute_aggregate_avg_d(pred_stats)
         print(f"Precision: {precision}")
         print(f"Recall: {recall}")
         print(f"F1: {f1}")
+        print(f"AvgD: {avg_d}")
 
         create_score_json(pred_stats, gt_stats)
         pred_stats.to_file(edge_save_path.replace('stats.geojson', 'scores.geojson'), driver="GeoJSON")

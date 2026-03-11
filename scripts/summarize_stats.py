@@ -105,6 +105,13 @@ def compute_aggregate_f1(gdf):
     return np.round(precision,3), np.round(recall,3), np.round(f1,3)
 
 
+def compute_aggregate_avg_d(gdf):
+    data = remove_na_data(gdf['avg_d'])
+    if len(data) == 0:
+        return -99.99
+    return np.round(np.average(np.array(data)), 3)
+
+
 def tra_jaccard(row, gdf2):
     index = row.name
 

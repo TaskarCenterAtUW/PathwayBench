@@ -9,7 +9,7 @@ ANNOT_DIR="$ROOT_DIR/tests/$DATASET_NAME/annotations"
 REVERSE_DIR="$ROOT_DIR/tests/$DATASET_NAME/reverse_edges_geojson"
 OUTPUT_EDGES_CSV="$ROOT_DIR/tests/$DATASET_NAME/edges_results.csv"
 
-echo "file,TraversabilitySimilarity,Precision,Recall,F1" > "$OUTPUT_EDGES_CSV"
+echo "file,TraversabilitySimilarity,Precision,Recall,F1,AvgD" > "$OUTPUT_EDGES_CSV"
 
 for reverse_file in "$REVERSE_DIR"/*.edges.geojson; do
     base_name=$(basename "$reverse_file")
@@ -31,8 +31,9 @@ for reverse_file in "$REVERSE_DIR"/*.edges.geojson; do
         precision=$(echo "$output_edges" | grep "Precision" | head -n1 | awk -F: '{print $2}' | xargs)
         recall=$(echo "$output_edges" | grep "Recall" | head -n1 | awk -F: '{print $2}' | xargs)
         f1=$(echo "$output_edges" | grep "F1" | head -n1 | awk -F: '{print $2}' | xargs)
+        avg_d=$(echo "$output_edges" | grep "AvgD" | head -n1 | awk -F: '{print $2}' | xargs)
 
-        echo "$base_name_no_ext,$ts,$precision,$recall,$f1" >> "$OUTPUT_EDGES_CSV"
+        echo "$base_name_no_ext,$ts,$precision,$recall,$f1,$avg_d" >> "$OUTPUT_EDGES_CSV"
     else
         echo "Annotation file not found for $base_name_no_ext, skipping."
     fi
