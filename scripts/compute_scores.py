@@ -4,6 +4,7 @@ import networkx as nx
 import argparse
 import sys
 import copy
+import json
 import traceback
 import geopandas as gpd
 import osmnx as ox
@@ -12,7 +13,7 @@ from statistics import stdev, mean
 #from osmapi import OsmApi
 import geonetworkx as gnx
 from shapely import Point, LineString, MultiLineString, Polygon, MultiPolygon
-from shapely.ops import voronoi_diagram
+from shapely.ops import voronoi_diagram, substring, nearest_points
 from scipy.spatial import ConvexHull
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -34,6 +35,216 @@ PRES = 1e-5
 BUFFER_SIZE = 5
 E_THRESHOLD = 5
 KERB_BUFFER_SIZE = 10
+
+OSM_ROAD_EDGES = None
+OSM_ROAD_SINDEX = None
+OSM_INTERSECTION_NODES = None
+
+Distance_to_intersection = {
+    "living_street": 5.9,
+    "residential": 6.9,
+    "tertiary": 7.1,
+    "trunk": 7.7,
+    "secondary": 7.7,
+    "primary": 8.9,
+    "unclassified": 10.0,
+    "trunk_link": 10.3,
+    "secondary_link": 13.3,
+    "motorway_link": 15.8,
+    "tertiary_link": 17.4,
+    "primary_link": 19.8
+}
+
+
+def _normalize_highway_type(highway_value):
+    if isinstance(highway_value, list):
+        highway_values = highway_value
+    elif isinstance(highway_value, str) and ";" in highway_value:
+        highway_values = [v.strip() for v in highway_value.split(";")]
+    else:
+        highway_values = [highway_value]
+
+    for hv in highway_values:
+        if hv in Distance_to_intersection:
+            return hv
+    return None
+
+
+def _get_intersection_point(crossing_geom, road_geom):
+    inter = crossing_geom.intersection(road_geom)
+    if inter.is_empty:
+        # Fallback to closest point on crossing to the road
+        pt_cross, _ = nearest_points(crossing_geom, road_geom)
+        return pt_cross
+
+    if inter.geom_type == "Point":
+        return inter
+    if inter.geom_type == "MultiPoint":
+        return list(inter.geoms)[0]
+
+    # For non-point intersections (line overlap, collection), pick a representative point
+    return inter.representative_point()
+
+
+def init_osm_road_context(tile_gdf):
+    global OSM_ROAD_EDGES, OSM_ROAD_SINDEX, OSM_INTERSECTION_NODES
+
+    if tile_gdf is None or tile_gdf.empty:
+        return
+
+    try:
+        bounds = tile_gdf.total_bounds  # minx, miny, maxx, maxy in PROJ
+        minx, miny, maxx, maxy = bounds
+
+        # Expand fetch area slightly to cover boundary effects.
+        expand_m = 50
+        area_poly = Polygon([
+            (minx - expand_m, miny - expand_m),
+            (maxx + expand_m, miny - expand_m),
+            (maxx + expand_m, maxy + expand_m),
+            (minx - expand_m, maxy + expand_m),
+        ])
+
+        area_gdf = gpd.GeoDataFrame({"geometry": [area_poly]}, crs=PROJ).to_crs("epsg:4326")
+        fetch_poly = area_gdf.iloc[0].geometry
+
+        G_osm = ox.graph_from_polygon(fetch_poly, network_type="all", simplify=True, retain_all=True)
+        road_edges = ox.graph_to_gdfs(G_osm, nodes=False, edges=True).to_crs(PROJ)
+        road_edges = road_edges[road_edges["highway"].notna()].copy()
+
+        node_gdf = ox.graph_to_gdfs(G_osm, nodes=True, edges=False).to_crs(PROJ)
+        node_degree = dict(G_osm.degree())
+        node_gdf["degree"] = node_gdf.index.map(lambda n: node_degree.get(n, 0))
+        # Degree >= 3 is a practical proxy for intersections.
+        intersection_nodes = node_gdf[node_gdf["degree"] >= 3].copy()
+
+        OSM_ROAD_EDGES = road_edges
+        OSM_ROAD_SINDEX = road_edges.sindex
+        OSM_INTERSECTION_NODES = intersection_nodes
+        print(
+            f"Loaded OSM road context with {len(road_edges)} edges "
+            f"and {len(intersection_nodes)} intersection nodes"
+        )
+    except Exception as e:
+        # Fallback to default buffering if OSM fetch fails.
+        OSM_ROAD_EDGES = None
+        OSM_ROAD_SINDEX = None
+        OSM_INTERSECTION_NODES = None
+        print(f"Warning: OSM road context unavailable ({e}). Using default buffer for all edges.")
+
+
+def save_osm_debug_geojson(edges_path):
+    if OSM_ROAD_EDGES is None:
+        return
+
+    def sanitize_for_geojson_export(gdf):
+        out = gdf.copy()
+        for col in out.columns:
+            if col == "geometry":
+                continue
+            # Fiona cannot serialize list/dict/tuple field types directly.
+            out[col] = out[col].apply(
+                lambda v: json.dumps(v) if isinstance(v, (list, dict, tuple)) else v
+            )
+        return out
+
+    roads_path = edges_path.replace('.geojson', '_osm_roads.geojson')
+    sanitize_for_geojson_export(OSM_ROAD_EDGES).to_file(roads_path, driver='GeoJSON')
+    print(f'{roads_path} saved')
+
+    if OSM_INTERSECTION_NODES is not None:
+        intersections_path = edges_path.replace('.geojson', '_osm_intersections.geojson')
+        sanitize_for_geojson_export(OSM_INTERSECTION_NODES).to_file(intersections_path, driver='GeoJSON')
+        print(f'{intersections_path} saved')
+
+
+def build_crossing_buffer_geometry(crossing_geom, default_buffer):
+    # Requires global OSM context; fallback to default buffer if unavailable.
+    if OSM_ROAD_EDGES is None or OSM_ROAD_SINDEX is None:
+        return crossing_geom.buffer(default_buffer)
+
+    try:
+        candidate_idx = list(OSM_ROAD_SINDEX.intersection(crossing_geom.bounds))
+        if len(candidate_idx) == 0:
+            return crossing_geom.buffer(default_buffer)
+
+        candidates = OSM_ROAD_EDGES.iloc[candidate_idx].copy()
+        candidates["dist_to_crossing"] = candidates.geometry.distance(crossing_geom)
+        candidates = candidates.sort_values("dist_to_crossing")
+
+        best_row = None
+        best_highway = None
+
+        # Prefer truly intersecting roads first.
+        intersecting = candidates[candidates.geometry.intersects(crossing_geom)]
+        source_rows = intersecting if not intersecting.empty else candidates
+
+        for _, row in source_rows.iterrows():
+            highway = _normalize_highway_type(row.get("highway"))
+            if highway is not None:
+                best_row = row
+                best_highway = highway
+                break
+
+        if best_row is None or best_highway is None:
+            return crossing_geom.buffer(default_buffer)
+
+        road_distance = Distance_to_intersection[best_highway]
+        half_window = 0.8 * road_distance
+
+        intersection_pt = _get_intersection_point(crossing_geom, best_row.geometry)
+        proj_d = crossing_geom.project(intersection_pt)
+        start_d = max(0.0, proj_d - half_window)
+        end_d = min(crossing_geom.length, proj_d + half_window)
+
+        if end_d <= start_d:
+            return crossing_geom.buffer(default_buffer)
+
+        crossing_segment = substring(crossing_geom, start_d, end_d)
+        if crossing_segment.is_empty:
+            return crossing_geom.buffer(default_buffer)
+
+        return crossing_segment.buffer(default_buffer)
+    except Exception:
+        return crossing_geom.buffer(default_buffer)
+
+
+def get_unmarked_crossing_gdf(gt_reference):
+    if gt_reference is None or gt_reference.empty:
+        return None
+    if "footway" not in gt_reference.columns:
+        return None
+
+    marking_col = None
+    for col_name in ["crossing:markings", "crossing_markings", "crossing_marking"]:
+        if col_name in gt_reference.columns:
+            marking_col = col_name
+            break
+    if marking_col is None:
+        return None
+
+    footway_series = gt_reference["footway"].astype(str).str.lower()
+    marking_series = gt_reference[marking_col].astype(str).str.lower()
+    mask = (footway_series == "crossing") & (marking_series == "no")
+    if mask.sum() == 0:
+        return None
+
+    return gt_reference.loc[mask, ["geometry"]].copy()
+
+
+def is_unmarked_crossing_edge(shape_geo, unmarked_crossings):
+    if unmarked_crossings is None or unmarked_crossings.empty:
+        return False
+
+    try:
+        candidate_idx = list(unmarked_crossings.sindex.intersection(shape_geo.bounds))
+        if len(candidate_idx) == 0:
+            return False
+        candidates = unmarked_crossings.iloc[candidate_idx]
+        # Small tolerance for slight geometric misalignments.
+        return candidates.geometry.intersects(shape_geo.buffer(1.0)).any()
+    except Exception:
+        return False
 
 
 def add_edges_from_linestring(graph, linestring, edge_attrs):
@@ -168,7 +379,7 @@ def compute_angle(line):
         raise TypeError(f"Unsupported geometry type: {type(line)}")
 
 
-def compute_f1(pred, gt, buff_dis=5, e_thres=5):
+def compute_f1(pred, gt, buff_dis=5, e_thres=5, unmarked_crossings=None):
     angle_thres = 30
     match_thres = 10
 
@@ -184,7 +395,14 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5):
         try:
             shape_geo = pred_it['geometry']
             pred_angle = compute_angle(shape_geo)
-            shape_geo_dia = shape_geo.buffer(buff_dis)
+
+            use_unmarked_crossing_logic = isinstance(shape_geo, LineString) and is_unmarked_crossing_edge(
+                shape_geo, unmarked_crossings
+            )
+            if use_unmarked_crossing_logic:
+                shape_geo_dia = build_crossing_buffer_geometry(shape_geo, buff_dis)
+            else:
+                shape_geo_dia = shape_geo.buffer(buff_dis)
 
             pred_copy = copy.deepcopy(pred_it)
             pred_copy = pred_copy.to_frame().T.reset_index()
@@ -287,6 +505,7 @@ def compute_kerb_error(pred, gt, buffer_size=10):
 def get_stats(polygon, G, gdf, gdf_gt):
     stats = {}
     undirected_g = nx.Graph(G)
+    unmarked_crossings = get_unmarked_crossing_gdf(gdf_gt)
 
     # edge-to-edge connected paths
     try:
@@ -307,8 +526,12 @@ def get_stats(polygon, G, gdf, gdf_gt):
 
     # f1 score
     try:
-        tp, fp, avg_d = compute_f1(gdf, gdf_gt, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
-        tp, fn, _ = compute_f1(gdf_gt, gdf, buff_dis=BUFFER_SIZE, e_thres = E_THRESHOLD)
+        tp, fp, avg_d = compute_f1(
+            gdf, gdf_gt, buff_dis=BUFFER_SIZE, e_thres=E_THRESHOLD, unmarked_crossings=unmarked_crossings
+        )
+        tp, fn, _ = compute_f1(
+            gdf_gt, gdf, buff_dis=BUFFER_SIZE, e_thres=E_THRESHOLD, unmarked_crossings=unmarked_crossings
+        )
         # precision = tp/(tp+fp)
         # recall = tp/(tp+fn)
         # f1 = 2*(precision*recall)/(precision + recall)
@@ -460,6 +683,8 @@ if __name__ == '__main__':
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=32)
 
     if edges_gdf is not None:
+        init_osm_road_context(tile_gdf)
+        save_osm_debug_geojson(args.edges_path)
         print('computing stats for edges...')
         output = df_dask.apply(compute_edge_score, axis=1, meta=[
             ('geometry', 'geometry'),
