@@ -98,9 +98,13 @@ def compute_aggregate_f1(gdf):
     fp = np.sum(np.array(gdf['fp']))
     fn = np.sum(np.array(gdf['fn']))
 
-    precision = tp/(tp+fp)
-    recall = tp/(tp+fn)
-    f1 = 2*(precision*recall)/(precision + recall)
+    precision_denom = tp + fp
+    recall_denom = tp + fn
+
+    precision = tp / precision_denom if precision_denom > 0 else 0.0
+    recall = tp / recall_denom if recall_denom > 0 else 0.0
+    f1_denom = precision + recall
+    f1 = 2 * (precision * recall) / f1_denom if f1_denom > 0 else 0.0
 
     return np.round(precision,3), np.round(recall,3), np.round(f1,3)
 

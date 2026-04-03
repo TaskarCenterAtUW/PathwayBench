@@ -418,7 +418,7 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5, unmarked_crossings=None):
             pred_it_pts = [pred_it['geometry'].interpolate((i/num_splits), normalized=True) for i in range(1, num_splits)]
             # pred_it_pts_gdf = gpd.GeoDataFrame({'geometry': pred_it_pts}, crs=pred_copy.crs)
 
-            avg_d = 1e5
+            avg_d = None
             if not inter.empty:
                 # distance_matched = pred_it_pts_gdf.sjoin_nearest(inter, distance_col="distances", how="inner")
                 # distance_lst = distance_matched['distances'].tolist()
@@ -431,14 +431,15 @@ def compute_f1(pred, gt, buff_dis=5, e_thres=5, unmarked_crossings=None):
 
                 if len(d_filter) > 0:
                     avg_d = np.average(d_filter)
-                else:
-                    avg_d = 1e5
 
-                if avg_d < e_thres:
+                if avg_d is not None and avg_d < e_thres:
                     tp += 1
                 else:
                     fp += 1
-                avg_d_list.append(avg_d)
+                if avg_d is not None:
+                    avg_d_list.append(avg_d)
+            else:
+                fp += 1
 
         except Exception as e:
             traceback.print_exc()
@@ -456,11 +457,13 @@ def compute_f1_point_distance(pred, gt, dist_thres=4):
     tp = 0
     fp = 0
 
+    if gt is None or gt.empty:
+        return 0, len(pred)
+
     for it, pred_it in pred.iterrows():
         try:
             pred_pt = pred_it['geometry']
-            gt['dist'] = gt['geometry'].distance(pred_pt)
-            nearest_dist = gt['dist'].min()
+            nearest_dist = gt['geometry'].distance(pred_pt).min()
 
             # print(f"Nearest distance for prediction {it}: {nearest_dist:.2f}")
 

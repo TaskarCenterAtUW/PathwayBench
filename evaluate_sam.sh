@@ -15,7 +15,7 @@ OUTPUT_EDGES_CSV="$ROOT_DIR/tests/$DATASET_NAME/edges_results.csv"
 OUTPUT_NODES_CSV="$ROOT_DIR/tests/$DATASET_NAME/nodes_results.csv"
 
 # Write headers
-echo "file,TraversabilitySimilarity,Precision,Recall,F1" > "$OUTPUT_EDGES_CSV"
+echo "file,TraversabilitySimilarity,Precision,Recall,F1,AvgD" > "$OUTPUT_EDGES_CSV"
 echo "file,Precision,Recall,F1,KerbError" > "$OUTPUT_NODES_CSV"
 
 # Loop over all *_edges.geojson in reverse dir
@@ -47,8 +47,9 @@ for reverse_file in "$REVERSE_DIR"/*.edges.geojson; do
         precision=$(echo "$output_edges" | grep "Precision" | head -n1 | awk -F: '{print $2}' | xargs)
         recall=$(echo "$output_edges" | grep "Recall" | head -n1 | awk -F: '{print $2}' | xargs)
         f1=$(echo "$output_edges" | grep "F1" | head -n1 | awk -F: '{print $2}' | xargs)
+        avg_d=$(echo "$output_edges" | grep "AvgD" | head -n1 | awk -F: '{print $2}' | xargs)
 
-        echo "$base_name_no_ext,$ts,$precision,$recall,$f1" >> "$OUTPUT_EDGES_CSV"
+        echo "$base_name_no_ext,$ts,$precision,$recall,$f1,$avg_d" >> "$OUTPUT_EDGES_CSV"
 
         # ---------- Nodes (optional) ----------
         nodes_pred="$REVERSE_DIR/${base_name_no_ext/edges/nodes}.geojson"
