@@ -56,6 +56,7 @@ Partition test area: This step partitions the entire test area into Tessellating
 Compute scores: This step computes the scroes (edge-retrieval F1 score, edge TraversabilitySimilarity, node F1 score) for the test area. `TIP GeoJSON` is the area partition generated in the previous step. 
 
   ```shell
-  python scripts/compute_scores.py <TIP GeoJSON> <Prediction Edge GeoJSON> <Ground Truth Edge GeoJSON> <Prediction Node GeoJSON> <Ground Truth Node GeoJSON>
+  python scripts/compute_scores.py <TIP GeoJSON> --edges-path <Prediction Edge GeoJSON> --gt-edges-path <Ground Truth Edge GeoJSON> --nodes-path <Prediction Node GeoJSON> --gt-nodes-path <Ground Truth Node GeoJSON>
   ```  
 
+Node evaluation supports `--node-type all|kerb`, `--node-matching standard|strict|by_id`, and the legacy `--node-strict` shortcut for strict matching. `by_id` matches predicted and ground-truth nodes by exact `_id`. It reports `NodeError`, the mean node distance in meters, and writes the node-error distance distribution CSV, histogram PNG, and matching summary CSV in the same directory as the result CSVs. High-end outliers above `2 * median` are removed from the NodeError summary, distribution CSV, and histogram.

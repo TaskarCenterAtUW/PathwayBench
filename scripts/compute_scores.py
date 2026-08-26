@@ -16,7 +16,10 @@ from shapely import Point, LineString, MultiLineString, Polygon, MultiPolygon
 from shapely.ops import voronoi_diagram, substring, nearest_points
 from scipy.spatial import ConvexHull
 from datetime import datetime
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, LogLocator
 from tqdm import tqdm
 import itertools
 import numpy as np
@@ -35,6 +38,7 @@ PRES = 1e-5
 BUFFER_SIZE = 5
 E_THRESHOLD = 5
 KERB_BUFFER_SIZE = 10
+NODE_ERROR_OUTLIER_MEDIAN_MULTIPLIER = 2.0
 
 OSM_ROAD_EDGES = None
 OSM_ROAD_SINDEX = None
@@ -477,32 +481,394 @@ def compute_f1_point_distance(pred, gt, dist_thres=4):
     return tp, fp
 
 
-def compute_kerb_error(pred, gt, buffer_size=10):
-    """Sum distances from predicted kerb nodes to each GT kerb node within a buffer."""
-    if gt is None or pred is None or gt.empty:
-        return 0.0
+def compute_one_to_one_point_matches(pred, gt, dist_thres=4):
+    if pred is None or gt is None or pred.empty or gt.empty:
+        return [], set(), set()
 
-    total_error = 0.0
+    candidate_pairs = []
+    gt_sindex = gt.sindex
 
-    for _, gt_row in gt.iterrows():
+    for pred_idx, pred_row in pred.iterrows():
+        pred_geom = pred_row['geometry']
+        if pred_geom is None or pred_geom.is_empty:
+            continue
+
+        candidate_positions = list(gt_sindex.intersection(pred_geom.buffer(dist_thres).bounds))
+        for _, gt_row in gt.iloc[candidate_positions].iterrows():
+            gt_geom = gt_row['geometry']
+            if gt_geom is None or gt_geom.is_empty:
+                continue
+
+            distance = pred_geom.distance(gt_geom)
+            if distance <= dist_thres:
+                candidate_pairs.append((float(distance), pred_idx, gt_row.name))
+
+    candidate_pairs.sort(key=lambda item: item[0])
+
+    matches = []
+    matched_pred = set()
+    matched_gt = set()
+    for distance, pred_idx, gt_idx in candidate_pairs:
+        if pred_idx in matched_pred or gt_idx in matched_gt:
+            continue
+        matched_pred.add(pred_idx)
+        matched_gt.add(gt_idx)
+        matches.append((pred_idx, gt_idx, distance))
+
+    return matches, matched_pred, matched_gt
+
+
+def compute_by_id_node_matches(pred, gt):
+    if pred is None or gt is None or pred.empty or gt.empty:
+        return [], set(), set()
+    if "_id" not in pred.columns or "_id" not in gt.columns:
+        return [], set(), set()
+
+    pred_with_id = pred[pred["_id"].notna()].copy()
+    gt_with_id = gt[gt["_id"].notna()].copy()
+    if pred_with_id.empty or gt_with_id.empty:
+        return [], set(), set()
+
+    pred_with_id["_match_id"] = pred_with_id["_id"].astype(str)
+    gt_with_id["_match_id"] = gt_with_id["_id"].astype(str)
+
+    shared_ids = set(pred_with_id["_match_id"]) & set(gt_with_id["_match_id"])
+    candidate_pairs = []
+    for match_id in shared_ids:
+        pred_group = pred_with_id[pred_with_id["_match_id"] == match_id]
+        gt_group = gt_with_id[gt_with_id["_match_id"] == match_id]
+        for pred_idx, pred_row in pred_group.iterrows():
+            pred_geom = pred_row["geometry"]
+            if pred_geom is None or pred_geom.is_empty:
+                continue
+            for gt_idx, gt_row in gt_group.iterrows():
+                gt_geom = gt_row["geometry"]
+                if gt_geom is None or gt_geom.is_empty:
+                    continue
+                candidate_pairs.append((float(pred_geom.distance(gt_geom)), pred_idx, gt_idx))
+
+    candidate_pairs.sort(key=lambda item: item[0])
+
+    matches = []
+    matched_pred = set()
+    matched_gt = set()
+    for distance, pred_idx, gt_idx in candidate_pairs:
+        if pred_idx in matched_pred or gt_idx in matched_gt:
+            continue
+        matched_pred.add(pred_idx)
+        matched_gt.add(gt_idx)
+        matches.append((pred_idx, gt_idx, distance))
+
+    return matches, matched_pred, matched_gt
+
+
+def compute_global_node_stats(pred, gt, matching_mode, dist_thres=4, error_buffer_size=10):
+    pred_count = 0 if pred is None else len(pred)
+    gt_count = 0 if gt is None else len(gt)
+
+    if matching_mode == "by_id":
+        f1_matches, _, _ = compute_by_id_node_matches(pred, gt)
+    else:
+        f1_matches, _, _ = compute_one_to_one_point_matches(pred, gt, dist_thres=dist_thres)
+    error_distribution = compute_node_error_distribution(
+        pred,
+        gt,
+        buffer_size=error_buffer_size,
+        matching_mode=matching_mode,
+    )
+
+    tp = len(f1_matches)
+    return {
+        "tp": tp,
+        "fp": pred_count - tp,
+        "fn": gt_count - tp,
+        "node_error": summarize_node_error(error_distribution),
+    }
+
+
+def compute_node_error_distribution(pred, gt, buffer_size=10, matching_mode="standard"):
+    columns = ["match_id", "pred_index", "gt_index", "distance_m", "matching_mode"]
+    if gt is None or pred is None or gt.empty or pred.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+    if matching_mode == "strict":
+        matches, _, _ = compute_one_to_one_point_matches(pred, gt, dist_thres=buffer_size)
+        for match_id, (pred_idx, gt_idx, distance) in enumerate(matches):
+            rows.append({
+                "match_id": match_id,
+                "pred_index": pred_idx,
+                "gt_index": gt_idx,
+                "distance_m": float(distance),
+                "matching_mode": "strict",
+            })
+        return pd.DataFrame(rows, columns=columns)
+
+    if matching_mode == "by_id":
+        matches, _, _ = compute_by_id_node_matches(pred, gt)
+        for match_id, (pred_idx, gt_idx, distance) in enumerate(matches):
+            rows.append({
+                "match_id": match_id,
+                "pred_index": pred_idx,
+                "gt_index": gt_idx,
+                "distance_m": float(distance),
+                "matching_mode": "by_id",
+            })
+        return pd.DataFrame(rows, columns=columns)
+
+    match_id = 0
+    for gt_idx, gt_row in gt.iterrows():
         try:
             gt_geom = gt_row['geometry']
             if gt_geom is None:
                 continue
 
             gt_buffer = gt_geom.buffer(buffer_size)
-            # Candidates that fall inside the buffer
             candidates = pred[pred['geometry'].within(gt_buffer)]
             if candidates.empty:
                 continue
 
             distances = candidates['geometry'].distance(gt_geom)
-            total_error += distances.sum()
+            pred_idx = distances.idxmin()
+            rows.append({
+                "match_id": match_id,
+                "pred_index": pred_idx,
+                "gt_index": gt_idx,
+                "distance_m": float(distances.loc[pred_idx]),
+                "matching_mode": "nearest-within-buffer",
+            })
+            match_id += 1
         except Exception:
-            # Skip problematic geometries but continue computing the rest
             continue
 
-    return float(total_error)
+    return pd.DataFrame(rows, columns=columns)
+
+
+def summarize_node_error(distribution_df):
+    distribution_df = filter_node_error_outliers(distribution_df)
+    if distribution_df is None or distribution_df.empty:
+        return 0.0
+    return float(pd.to_numeric(distribution_df["distance_m"]).mean())
+
+
+def node_error_outlier_threshold(distribution_df):
+    if distribution_df is None or distribution_df.empty:
+        return None
+
+    distances = pd.to_numeric(distribution_df["distance_m"], errors="coerce")
+    valid_distances = distances.dropna()
+    if valid_distances.empty:
+        return None
+
+    median_distance = float(valid_distances.median())
+    threshold = median_distance * NODE_ERROR_OUTLIER_MEDIAN_MULTIPLIER
+    if threshold <= 0:
+        threshold = float(valid_distances.max())
+    return threshold
+
+
+def filter_node_error_outliers(distribution_df):
+    if distribution_df is None or distribution_df.empty:
+        return distribution_df
+
+    distances = pd.to_numeric(distribution_df["distance_m"], errors="coerce")
+    threshold = node_error_outlier_threshold(distribution_df)
+    if threshold is None:
+        return distribution_df.iloc[0:0].copy()
+
+    return distribution_df.loc[distances <= threshold].copy()
+
+
+def compute_node_error(pred, gt, buffer_size=10):
+    """Mean distance from each GT node to its nearest predicted node within a buffer."""
+    distribution = compute_node_error_distribution(pred, gt, buffer_size=buffer_size, matching_mode="standard")
+    return summarize_node_error(distribution)
+
+
+def compute_id_summary(gdf, prefix):
+    total = 0 if gdf is None else len(gdf)
+    summary = {
+        f"{prefix}_nodes_total": total,
+        f"{prefix}_nodes_with_id": 0,
+        f"{prefix}_nodes_missing_id": total,
+        f"{prefix}_unique_id_count": 0,
+        f"{prefix}_duplicate_id_count": 0,
+        f"{prefix}_duplicate_node_count": 0,
+    }
+    if gdf is None or gdf.empty or "_id" not in gdf.columns:
+        return summary
+
+    ids = gdf["_id"].dropna().astype(str)
+    counts = ids.value_counts()
+    duplicate_counts = counts[counts > 1]
+
+    summary[f"{prefix}_nodes_with_id"] = int(len(ids))
+    summary[f"{prefix}_nodes_missing_id"] = int(total - len(ids))
+    summary[f"{prefix}_unique_id_count"] = int(len(counts))
+    summary[f"{prefix}_duplicate_id_count"] = int(len(duplicate_counts))
+    summary[f"{prefix}_duplicate_node_count"] = int(duplicate_counts.sum() - len(duplicate_counts))
+    return summary
+
+
+def summarize_distance_distribution(distribution_df, prefix):
+    summary = {
+        f"{prefix}_match_count": 0,
+        f"{prefix}_unique_pred_match_count": 0,
+        f"{prefix}_unique_gt_match_count": 0,
+        f"{prefix}_node_error_mean_m": 0.0,
+        f"{prefix}_node_error_median_m": 0.0,
+        f"{prefix}_node_error_stddev_m": 0.0,
+        f"{prefix}_node_error_min_m": 0.0,
+        f"{prefix}_node_error_max_m": 0.0,
+    }
+    if distribution_df is None or distribution_df.empty:
+        return summary
+
+    distances = pd.to_numeric(distribution_df["distance_m"], errors="coerce").dropna()
+    summary[f"{prefix}_match_count"] = int(len(distribution_df))
+    summary[f"{prefix}_unique_pred_match_count"] = int(distribution_df["pred_index"].nunique())
+    summary[f"{prefix}_unique_gt_match_count"] = int(distribution_df["gt_index"].nunique())
+    if distances.empty:
+        return summary
+
+    summary[f"{prefix}_node_error_mean_m"] = float(distances.mean())
+    summary[f"{prefix}_node_error_median_m"] = float(distances.median())
+    summary[f"{prefix}_node_error_stddev_m"] = float(distances.std(ddof=0))
+    summary[f"{prefix}_node_error_min_m"] = float(distances.min())
+    summary[f"{prefix}_node_error_max_m"] = float(distances.max())
+    return summary
+
+
+def compute_node_match_summary(pred, gt, raw_distribution, filtered_distribution, matching_mode, node_type, stats):
+    pred_total = 0 if pred is None else len(pred)
+    gt_total = 0 if gt is None else len(gt)
+    raw_unique_pred = 0 if raw_distribution is None or raw_distribution.empty else int(raw_distribution["pred_index"].nunique())
+    raw_unique_gt = 0 if raw_distribution is None or raw_distribution.empty else int(raw_distribution["gt_index"].nunique())
+    filtered_unique_pred = 0 if filtered_distribution is None or filtered_distribution.empty else int(filtered_distribution["pred_index"].nunique())
+    filtered_unique_gt = 0 if filtered_distribution is None or filtered_distribution.empty else int(filtered_distribution["gt_index"].nunique())
+
+    threshold = node_error_outlier_threshold(raw_distribution)
+    summary = {
+        "node_type": node_type,
+        "matching_mode": matching_mode,
+        "f1_tp": int(stats.get("tp", 0)),
+        "f1_fp": int(stats.get("fp", 0)),
+        "f1_fn": int(stats.get("fn", 0)),
+        "pred_nodes_skipped_raw": int(pred_total - raw_unique_pred),
+        "gt_nodes_skipped_raw": int(gt_total - raw_unique_gt),
+        "pred_nodes_skipped_after_outlier_filter": int(pred_total - filtered_unique_pred),
+        "gt_nodes_skipped_after_outlier_filter": int(gt_total - filtered_unique_gt),
+        "outlier_threshold_m": -99.99 if threshold is None else float(threshold),
+        "outlier_removed_count": int(0 if raw_distribution is None else len(raw_distribution) - len(filtered_distribution)),
+        "outlier_policy": f"distance_m <= {NODE_ERROR_OUTLIER_MEDIAN_MULTIPLIER} * median(distance_m)",
+    }
+    summary.update(compute_id_summary(pred, "pred"))
+    summary.update(compute_id_summary(gt, "gt"))
+    summary.update(summarize_distance_distribution(raw_distribution, "raw"))
+    summary.update(summarize_distance_distribution(filtered_distribution, "filtered"))
+
+    if pred is not None and gt is not None and "_id" in pred.columns and "_id" in gt.columns:
+        pred_ids = set(pred["_id"].dropna().astype(str))
+        gt_ids = set(gt["_id"].dropna().astype(str))
+        shared_ids = pred_ids & gt_ids
+        summary["shared_id_count"] = int(len(shared_ids))
+        summary["pred_id_not_in_gt_count"] = int(len(pred_ids - gt_ids))
+        summary["gt_id_not_in_pred_count"] = int(len(gt_ids - pred_ids))
+    else:
+        summary["shared_id_count"] = 0
+        summary["pred_id_not_in_gt_count"] = 0
+        summary["gt_id_not_in_pred_count"] = 0
+
+    return summary
+
+
+def save_node_match_summary(summary, summary_path):
+    pd.DataFrame([summary]).to_csv(summary_path, index=False)
+    print(f'{summary_path} saved')
+
+
+def get_node_error_title_context(nodes_path, output_dir=None):
+    if output_dir:
+        return os.path.basename(os.path.normpath(output_dir))
+
+    node_dir = os.path.dirname(nodes_path)
+    node_dir_name = os.path.basename(os.path.normpath(node_dir))
+    if node_dir_name == "reverse_edges_geojson":
+        return os.path.basename(os.path.dirname(os.path.normpath(node_dir)))
+    return node_dir_name
+
+
+def save_node_error_outputs(distribution_df, distribution_path, histogram_path, title_context=None):
+    distribution_df = filter_node_error_outliers(distribution_df)
+    distribution_df.to_csv(distribution_path, index=False)
+    print(f'{distribution_path} saved')
+
+    title = "Node Error Distribution"
+    if title_context:
+        title = f"{title} ({title_context})"
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    distances = pd.to_numeric(distribution_df["distance_m"]) if not distribution_df.empty else pd.Series(dtype=float)
+    distances = distances.dropna()
+    if len(distances) > 0:
+        mean_distance = float(distances.mean())
+        std_distance = float(distances.std(ddof=0))
+        median_distance = float(distances.median())
+        center_distance = max(median_distance, 0.001)
+        x_min = 0.0
+        x_max = max(float(distances.max()), center_distance * NODE_ERROR_OUTLIER_MEDIAN_MULTIPLIER)
+
+        bins = min(30, max(10, int(np.sqrt(len(distances)))))
+        counts, bin_edges = np.histogram(distances, bins=bins, range=(x_min, x_max))
+        bar_widths = np.diff(bin_edges)
+        use_log_scale = len(counts) > 0 and counts.max() > 100
+        if use_log_scale:
+            log_floor = 0.8
+            nonzero_counts = counts[counts > 0]
+            ax.bar(
+                bin_edges[:-1][counts > 0],
+                nonzero_counts - log_floor,
+                width=bar_widths[counts > 0],
+                bottom=log_floor,
+                align="edge",
+                edgecolor="black",
+                color="#4c78a8",
+            )
+            ax.set_yscale("log")
+            ax.set_ylim(bottom=log_floor)
+            ax.yaxis.set_major_locator(LogLocator(base=10))
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
+            ax.set_ylabel("Count (log scale)")
+        else:
+            ax.bar(
+                bin_edges[:-1],
+                counts,
+                width=bar_widths,
+                align="edge",
+                edgecolor="black",
+                color="#4c78a8",
+            )
+            ax.set_ylabel("Count")
+
+        ax.axvline(mean_distance, color="#f58518", linestyle="--", linewidth=2, label=f"mean {mean_distance:.3f} m")
+        ax.axvline(median_distance, color="#54a24b", linestyle=":", linewidth=2, label=f"median {median_distance:.3f} m")
+        ax.plot([], [], " ", label=f"stddev {std_distance:.3f} m")
+        ax.legend(loc="upper left")
+        ax.set_xlim(x_min, x_max)
+        ax.set_title(title)
+    else:
+        ax.text(0.5, 0.5, "No node error matches", ha="center", va="center", transform=ax.transAxes)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_title(title)
+        ax.set_ylabel("Count")
+
+    ax.set_xlabel("Distance (m)")
+    fig.tight_layout()
+    fig.savefig(histogram_path, dpi=150)
+    plt.close(fig)
+    print(f'{histogram_path} saved')
+    return distribution_df
 
 
 def get_stats(polygon, G, gdf, gdf_gt):
@@ -572,12 +938,12 @@ def get_node_stats(polygon, G, gdf, gdf_gt):
         stats["fp"] = -99.99
         stats["fn"] = -99.99
 
-    # kerb error
+    # node error
     try:
-        kerb_error = compute_kerb_error(gdf, gdf_gt, buffer_size=KERB_BUFFER_SIZE)
-        stats["kerb_error"] = kerb_error
+        node_error = compute_node_error(gdf, gdf_gt, buffer_size=KERB_BUFFER_SIZE)
+        stats["node_error"] = node_error
     except Exception:
-        stats["kerb_error"] = -99.99
+        stats["node_error"] = -99.99
     return stats
 
 
@@ -630,12 +996,66 @@ def compute_node_score(feature, gdf, gdf_gt):
         feature.loc['tp'] = measures["tp"]
         feature.loc['fp'] = measures["fp"]
         feature.loc['fn'] = measures["fn"]
-        feature.loc['kerb_error'] = measures.get("kerb_error", -99.99)
+        feature.loc['node_error'] = measures.get("node_error", -99.99)
         return feature
 
 
 def read_gdf(p):
     return gpd.read_file(p)
+
+
+def normalize_node_type(node_type):
+    node_type = node_type.lower()
+    if node_type == "all":
+        return "all"
+    if node_type == "kerb":
+        return "kerb"
+    raise ValueError(f"Unsupported node type: {node_type}")
+
+
+def filter_nodes_by_type(nodes_gdf, node_type):
+    if node_type == "all":
+        return nodes_gdf.copy()
+
+    if "barrier" not in nodes_gdf.columns:
+        return nodes_gdf.iloc[0:0].copy()
+
+    return nodes_gdf[nodes_gdf["barrier"].astype(str).str.lower() == "kerb"].copy()
+
+
+def compute_precision_recall_f1_from_counts(tp, fp, fn):
+    precision_denom = tp + fp
+    recall_denom = tp + fn
+
+    precision = tp / precision_denom if precision_denom > 0 else 0.0
+    recall = tp / recall_denom if recall_denom > 0 else 0.0
+    f1_denom = precision + recall
+    f1 = 2 * (precision * recall) / f1_denom if f1_denom > 0 else 0.0
+
+    return np.round(precision, 3), np.round(recall, 3), np.round(f1, 3)
+
+
+def node_stats_basename(node_type, matching_mode="standard"):
+    label = "kerb" if node_type == "kerb" else "all_nodes"
+    return f"{label}_{matching_mode}_stats" if matching_mode != "standard" else f"{label}_stats"
+
+
+def node_error_artifact_base(nodes_path, node_type, matching_mode="standard", output_dir=None):
+    label = "kerb" if node_type == "kerb" else "all_nodes"
+    artifact_name = os.path.basename(nodes_path).replace(
+        '.geojson',
+        f'_{label}_{matching_mode}_node_error',
+    )
+    if output_dir is None:
+        output_dir = os.path.dirname(nodes_path)
+    os.makedirs(output_dir, exist_ok=True)
+    return os.path.join(output_dir, artifact_name)
+
+
+def resolve_node_matching_mode(args):
+    if args.node_strict:
+        return "strict"
+    return args.node_matching or "standard"
 
 
 if __name__ == '__main__':
@@ -649,6 +1069,15 @@ if __name__ == '__main__':
     parser.add_argument("--gt-nodes-path", help="Path to ground-truth nodes")
     parser.add_argument("--e-threshold", type=float, default=5,
                         help="Edge threshold (float), default = 5")
+    parser.add_argument("--node-strict", "--node_strict", action="store_true",
+                        help="Use one-to-one closest-node matching across the whole node dataset.")
+    parser.add_argument("--node-matching", "--node_matching",
+                        choices=["standard", "strict", "by_id"],
+                        help="Node matching mode. Defaults to standard, or strict when --node-strict is set.")
+    parser.add_argument("--node-type", "--node_type", type=str.lower, choices=["all", "kerb"], default="kerb",
+                        help="Which nodes to evaluate: All or Kerb. Default = Kerb")
+    parser.add_argument("--output-dir", "--output_dir",
+                        help="Directory for node error distribution CSV and histogram PNG artifacts.")
 
     args = parser.parse_args()
 
@@ -682,6 +1111,8 @@ if __name__ == '__main__':
         nodes_gdf_gt = nodes_gdf_gt.to_crs(PROJ)
 
     E_THRESHOLD = args.e_threshold
+    node_type = normalize_node_type(args.node_type)
+    node_matching_mode = resolve_node_matching_mode(args)
 
     df_dask = dask_geopandas.from_geopandas(tile_gdf, npartitions=32)
 
@@ -736,41 +1167,139 @@ if __name__ == '__main__':
     if nodes_gdf is None:
         exit()
 
-    print('computing stats for curb nodes...')
+    pred_node_gdf = filter_nodes_by_type(nodes_gdf, node_type)
+    gt_node_gdf = filter_nodes_by_type(nodes_gdf_gt, node_type)
+    node_label = "kerb" if node_type == "kerb" else "all"
 
-    pred_curb_gdf = nodes_gdf[nodes_gdf['barrier'] == 'kerb']
-    # pred_curb_gdf = nodes_gdf[nodes_gdf['ext:node_type'] == 'curb'] # Legacy Prophet output
-    gt_curb_gdf = nodes_gdf_gt[nodes_gdf_gt['barrier'] == 'kerb']
+    if node_matching_mode != "standard":
+        print(f'computing {node_matching_mode} stats for {node_label} nodes...')
+        global_distribution = compute_node_error_distribution(
+            pred_node_gdf,
+            gt_node_gdf,
+            buffer_size=KERB_BUFFER_SIZE,
+            matching_mode=node_matching_mode,
+        )
+        global_stats = compute_global_node_stats(
+            pred_node_gdf,
+            gt_node_gdf,
+            matching_mode=node_matching_mode,
+            dist_thres=E_THRESHOLD,
+            error_buffer_size=KERB_BUFFER_SIZE,
+        )
+        global_stats["node_error"] = summarize_node_error(global_distribution)
+        global_output = gpd.GeoDataFrame(
+            [global_stats],
+            geometry=[tile_gdf.unary_union],
+            crs=tile_gdf.crs,
+        )
+        global_save_path = args.nodes_path.replace(
+            '.geojson',
+            f'_{node_stats_basename(node_type, matching_mode=node_matching_mode)}.geojson',
+        )
+        global_output.to_file(global_save_path, driver='GeoJSON')
+        print(f'{global_save_path} saved')
+        global_error_base = node_error_artifact_base(
+            args.nodes_path,
+            node_type,
+            matching_mode=node_matching_mode,
+            output_dir=args.output_dir,
+        )
+        filtered_global_distribution = save_node_error_outputs(
+            global_distribution,
+            f'{global_error_base}_distribution.csv',
+            f'{global_error_base}_histogram.png',
+            title_context=get_node_error_title_context(args.nodes_path, args.output_dir),
+        )
+        global_summary = compute_node_match_summary(
+            pred_node_gdf,
+            gt_node_gdf,
+            global_distribution,
+            filtered_global_distribution,
+            node_matching_mode,
+            node_type,
+            global_stats,
+        )
+        save_node_match_summary(global_summary, f'{global_error_base}_summary.csv')
 
-    curb_output = df_dask.apply(compute_node_score, axis=1, meta=[
+        print(f'stats for {args.nodes_path} at threshold {E_THRESHOLD} meter')
+        print(f'{node_label} node stats: ')
+        precision, recall, f1 = compute_precision_recall_f1_from_counts(
+            global_stats["tp"],
+            global_stats["fp"],
+            global_stats["fn"],
+        )
+        print(f"Precision: {precision}")
+        print(f"Recall: {recall}")
+        print(f"F1: {f1}")
+        print(f"Node Error: {global_stats['node_error']}")
+        exit()
+
+    print(f'computing stats for {node_label} nodes...')
+
+    node_output = df_dask.apply(compute_node_score, axis=1, meta=[
     ('geometry', 'geometry'),
     ('tp', 'object'),
     ('fp', 'object'),
     ('fn', 'object'),
-    ('kerb_error', 'object'),
-    ], gdf=pred_curb_gdf, gdf_gt=gt_curb_gdf).compute(scheduler='multiprocessing')
+    ('node_error', 'object'),
+    ], gdf=pred_node_gdf, gdf_gt=gt_node_gdf).compute(scheduler='multiprocessing')
 
-    curb_node_save_path = args.nodes_path.replace('.geojson','_curb_stats.geojson')
-    curb_output.to_file(curb_node_save_path, driver='GeoJSON')
-    print(f'{curb_node_save_path} saved')
+    node_save_path = args.nodes_path.replace(
+        '.geojson',
+        f'_{node_stats_basename(node_type, matching_mode=node_matching_mode)}.geojson',
+    )
+    node_output.to_file(node_save_path, driver='GeoJSON')
+    print(f'{node_save_path} saved')
+    node_error_distribution = compute_node_error_distribution(
+        pred_node_gdf,
+        gt_node_gdf,
+        buffer_size=KERB_BUFFER_SIZE,
+        matching_mode=node_matching_mode,
+    )
+    node_error_base = node_error_artifact_base(
+        args.nodes_path,
+        node_type,
+        matching_mode=node_matching_mode,
+        output_dir=args.output_dir,
+    )
+    filtered_node_error_distribution = save_node_error_outputs(
+        node_error_distribution,
+        f'{node_error_base}_distribution.csv',
+        f'{node_error_base}_histogram.png',
+        title_context=get_node_error_title_context(args.nodes_path, args.output_dir),
+    )
+    node_summary = compute_node_match_summary(
+        pred_node_gdf,
+        gt_node_gdf,
+        node_error_distribution,
+        filtered_node_error_distribution,
+        node_matching_mode,
+        node_type,
+        {
+            "tp": node_output["tp"].sum(),
+            "fp": node_output["fp"].sum(),
+            "fn": node_output["fn"].sum(),
+        },
+    )
+    save_node_match_summary(node_summary, f'{node_error_base}_summary.csv')
 
     curb_link_save_path = None
-    if edges_gdf is not None:
+    if node_type == "kerb" and edges_gdf is not None:
         print('computing stats for curb and link nodes...')
 
-        merge_forward = pd.merge(pred_curb_gdf, edges_gdf, left_on='_id', right_on='_u_id')
+        merge_forward = pd.merge(pred_node_gdf, edges_gdf, left_on='_id', right_on='_u_id')
         merge_forward = pd.merge(merge_forward, nodes_gdf, left_on='_v_id', right_on='_id', suffixes=('', '_matched'))
 
-        merge_reverse = pd.merge(pred_curb_gdf, edges_gdf, left_on='_id', right_on='_v_id')
+        merge_reverse = pd.merge(pred_node_gdf, edges_gdf, left_on='_id', right_on='_v_id')
         merge_reverse = pd.merge(merge_reverse, nodes_gdf, left_on='_u_id', right_on='_id', suffixes=('', '_matched'))
 
         pred_curb_link = pd.concat([merge_forward, merge_reverse], ignore_index=True)
         pred_curb_link = pred_curb_link.drop(['geometry_x', 'geometry_y'], axis=1)
 
-        gt_merge_forward = pd.merge(gt_curb_gdf, edges_gdf_gt, left_on='_id', right_on='_u_id')
+        gt_merge_forward = pd.merge(gt_node_gdf, edges_gdf_gt, left_on='_id', right_on='_u_id')
         gt_merge_forward = pd.merge(gt_merge_forward, nodes_gdf_gt, left_on='_v_id', right_on='_id', suffixes=('', '_matched'))
 
-        gt_merge_reverse = pd.merge(gt_curb_gdf, edges_gdf_gt, left_on='_id', right_on='_v_id')
+        gt_merge_reverse = pd.merge(gt_node_gdf, edges_gdf_gt, left_on='_id', right_on='_v_id')
         gt_merge_reverse = pd.merge(gt_merge_reverse, nodes_gdf_gt, left_on='_u_id', right_on='_id', suffixes=('', '_matched'))
 
         gt_curb_link = pd.concat([gt_merge_forward, gt_merge_reverse], ignore_index=True)
@@ -781,7 +1310,7 @@ if __name__ == '__main__':
         ('tp', 'object'),
         ('fp', 'object'),
         ('fn', 'object'),
-        ('kerb_error', 'object'),
+        ('node_error', 'object'),
         ], gdf=pred_curb_link, gdf_gt=gt_curb_link).compute(scheduler='multiprocessing')
 
         curb_link_save_path = args.nodes_path.replace('.geojson','_curb_link_stats.geojson')
@@ -790,14 +1319,14 @@ if __name__ == '__main__':
 
     print(f'stats for {args.nodes_path if args.nodes_path else args.edges_path} at threshold {E_THRESHOLD} meter')
 
-    curb_node_stats = gpd.read_file(curb_node_save_path)
-    print('curb node stats: ')
-    precision, recall, f1 = compute_aggregate_f1(curb_node_stats)
+    node_stats = gpd.read_file(node_save_path)
+    print(f'{node_label} node stats: ')
+    precision, recall, f1 = compute_aggregate_f1(node_stats)
     print(f"Precision: {precision}")
     print(f"Recall: {recall}")
     print(f"F1: {f1}")
-    kerb_error_total = curb_node_stats['kerb_error'].mean()
-    print(f"Kerb Error: {kerb_error_total}")
+    node_error_total = summarize_node_error(node_error_distribution)
+    print(f"Node Error: {node_error_total}")
 
     if curb_link_save_path is not None:
         curb_link_node_stats = gpd.read_file(curb_link_save_path)
